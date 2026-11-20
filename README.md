@@ -48,7 +48,7 @@ Noto 是一款本地优先的 Markdown 笔记工具，适合写技术笔记、�
 
 ## Windows 桌面
 
-在 Releases 中下载 `Noto-0.1.0-windows-x64-setup.exe`，安装后打开 Noto，选择或创建一个知识库文件夹。桌面版使用 Microsoft Edge WebView2。首个测试安装包未签名。 [下载 Windows 安装包](https://github.com/chongweiwang/Noto/releases)
+在 Releases 中下载 `Noto-0.2.0-windows-x64-setup.exe` 安装，或解压 `Noto-0.2.0-windows-x64-portable.zip` 后直接打开 `Noto.exe`。桌面版使用 Microsoft Edge WebView2，安装包未签名。 [下载 Windows 版本](https://github.com/chongweiwang/Noto/releases)
 
 ### 从源码构建
 
@@ -77,7 +77,7 @@ npm.cmd --prefix desktop run tauri -- build --config src-tauri/tauri.installer.c
 
 在 x64 Windows 的 WSL 2 Ubuntu 中安装 Docker Engine 和 Compose 插件。以下命令在 Ubuntu 终端运行。 [安装 WSL](https://learn.microsoft.com/windows/wsl/install) · [安装 Docker Engine](https://docs.docker.com/engine/install/ubuntu/)
 
-从 Releases 下载 `noto-0.1.0-linux-amd64.tar` 和同版本的 **Source code (zip)**。在 WSL 中解压源码，把 TAR 放在 `compose.yaml` 所在目录，再进入该目录。 [下载 Docker 镜像](https://github.com/chongweiwang/Noto/releases)
+从 Releases 下载 `noto-0.2.0-linux-amd64.tar` 和同版本的 **Source code (zip)**。在 WSL 中解压源码，把 TAR 放在 `compose.yaml` 所在目录，再进入该目录。 [下载 Docker 镜像](https://github.com/chongweiwang/Noto/releases)
 
 首次运行时创建知识库、服务数据目录和口令文件。下面的命令会在缺少 `.env` 时生成配置，目录与口令保存在 WSL 的 Linux 文件系统中。
 
@@ -91,7 +91,7 @@ fi
 
 if [ ! -f .env ]; then
   cat > .env <<EOF
-NOTO_IMAGE=noto:v0.1.0
+NOTO_IMAGE=noto:v0.2.0
 NOTO_VAULT_DIR=$noto_dir/vault
 NOTO_DATA_DIR=$noto_dir/data
 NOTO_PASSWORD_FILE=$noto_dir/password.txt
@@ -104,7 +104,7 @@ fi
 导入镜像并启动原项目。默认只监听本机，Windows 浏览器可以打开 `http://localhost:3457`。使用前面生成的口令文件里的内容登录。
 
 ```sh
-docker image load -i noto-0.1.0-linux-amd64.tar
+docker image load -i noto-0.2.0-linux-amd64.tar
 docker compose config --quiet
 docker compose up -d --no-build --pull never
 ```
@@ -115,8 +115,8 @@ docker compose up -d --no-build --pull never
 
 ```sh
 docker buildx build --platform linux/amd64 --provenance=false --load \
-  --build-arg NOTO_REVISION=v0.1.0 -t noto:v0.1.0 .
-docker image save -o noto-0.1.0-linux-amd64.tar noto:v0.1.0
+  --build-arg NOTO_REVISION=v0.2.0 -t noto:v0.2.0 .
+docker image save -o noto-0.2.0-linux-amd64.tar noto:v0.2.0
 ```
 
 ## 数据与同步
