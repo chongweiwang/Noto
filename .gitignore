@@ -1,0 +1,17 @@
+/target/
+/.local/
+/workspace/
+/password.txt
+/noto-*.tar
+/.env
+/.env.*
+!/.env.example
+**/node_modules/
+**/.next/
+**/out/
+**/*.tsbuildinfo
+desktop/src-tauri/gen/
+
+
+/desktop/src/lib/export-assets.generated.ts
+/desktop/public/pdfjs/

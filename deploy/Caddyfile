@@ -1,0 +1,15 @@
+{
+	admin off
+	persist_config off
+	auto_https disable_redirects
+	default_sni {$NOTO_HTTPS_HOST}
+	skip_install_trust
+	servers {
+		protocols h1 h2
+	}
+}
+
+https://{$NOTO_HTTPS_HOST}:8443 {
+	tls internal
+	reverse_proxy noto:3457
+}

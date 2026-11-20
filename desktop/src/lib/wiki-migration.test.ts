@@ -1,0 +1,54 @@
+// @vitest-environment jsdom
+import "fake-indexeddb/auto";
+import {afterEach,expect,it,vi} from "vitest";
+import {MemoryVault} from "../test/memory-vault";
+import {relocateNotes,rewriteDocumentLinks,rewriteNoteLinks} from "./relocate-notes";
+import {BrowserApi} from "./browser-api";
+import {BrowserStore} from "./browser-store";
+import {createCanvasNode,parseCanvas,serializeCanvas} from "./canvas-document";
+import {taskCategoryMarker} from "./tasks";
+import {emptyDrawing,parseDrawing,serializeDrawing,defaultDrawingStyle} from "./drawing-document";
+import {createDrawingElement} from "./drawing-geometry";
+afterEach(()=>vi.unstubAllGlobals());
+const raw="[[项目/目标#草案.md #结果 &#35; 细节|&#91;显示&#93;]] [[#本篇|自己]]\n\n[[项目/目标#草案.md#^block-1|块]]\n\n![[项目/目标#草案.md#^block-1]]";
+const moved=raw.replaceAll("项目/目标#草案.md","归档/目标#草案.md");
+it("目录迁移维护普通/任务/画布/所有恢复草稿，只改文件部分并保存原文备份",async()=>{
+ const vault=new MemoryVault();vault.put("项目/目标#草案.md","# 结果");
+ vault.put("首页.md",raw);vault.put("任务/工作/开发.md",taskCategoryMarker+"\n\n# 开发\n\n"+raw);
+ const canvas=serializeCanvas({nodes:[createCanvasNode("text",{x:0,y:0},{id:"t",text:raw})],edges:[]});vault.put("图.canvas",canvas);
+ const drawing=serializeDrawing({...emptyDrawing(),elements:[{...createDrawingElement("rectangle",{x:0,y:0},{x:100,y:100},defaultDrawingStyle,"box"),link:{file:"项目/目标#草案.md",subpath:"#原始%20片段"}}]});vault.put("图.drawing",drawing);
+ for(const [path,note] of vault.notes)if(path!=="项目/目标#草案.md")vault.stored.set(path,{path,content:note.content,baseVersion:note.version});
+ vault.stored.set("孤立.md",{path:"孤立.md",content:raw,baseVersion:"old"});
+ const result=await relocateNotes([{from:"项目",to:"归档"}],vault);
+ expect(vault.notes.get("首页.md")!.content).toBe(moved);expect(vault.notes.get("任务/工作/开发.md")!.content).toContain(moved);
+ expect(parseCanvas(vault.notes.get("图.canvas")!.content).nodes[0].text).toBe(moved);
+ expect(parseDrawing(vault.notes.get("图.drawing")!.content).elements[0].link).toEqual({file:"归档/目标#草案.md",subpath:"#原始%20片段"});
+ for(const path of ["首页.md","任务/工作/开发.md","孤立.md"])expect(vault.stored.get(path)!.content).toContain(moved);
+ expect(parseCanvas(vault.stored.get("图.canvas")!.content).nodes[0].text).toBe(moved);
+ expect(vault.notes.get(result.backup+"/原文/首页.md")!.content).toBe(raw);
+ expect(vault.notes.get(result.backup+"/恢复草稿/孤立.md")!.content).toContain(raw);
+});
+it("另存重定位相对附件但不把同篇 Wiki 标题改成原笔记",()=>{
+ const source="[[#重复-1|自己]] [[项目/目标#草案.md#结果|其他]] ![图](images/a.png)";
+ const updated=rewriteNoteLinks(source,"原目录/a.md","副本/a.md",[],["原目录/a.md","项目/目标#草案.md"]);
+ expect(updated).toContain("[[#重复-1|自己]] [[项目/目标#草案.md#结果|其他]]");
+ expect(decodeURIComponent(updated)).toContain("![图](../原目录/images/a.png)");
+});
+it.each(["completed","failed"] as const)("网页迁移响应丢失后 %s 恢复标题片段/别名及任务和画布草稿，部分失败要求人工确认",async(status)=>{
+ const store=new BrowserStore("wiki-migration-"+crypto.randomUUID()),identity={serverId:"server",vaultId:"vault",vault:"库",csrf:"token"};
+ const api=new BrowserApi(identity,vi.fn(),store),paths=["项目/目标#草案.md","首页.md","任务/工作/开发.md","图.canvas"];
+ const originals=paths.map(path=>({path,version:"v1",content:path.endsWith(".canvas")?serializeCanvas({nodes:[createCanvasNode("text",{x:0,y:0},{id:"t",text:raw})],edges:[]}):path==="项目/目标#草案.md"?"# 结果":raw}));
+ for(const note of originals)await store.writeDraft({path:note.path,content:note.content,baseVersion:note.version});
+ const moves=[{from:"项目",to:"归档"}],notes=originals.map(note=>({...note,path:note.path.replace(/^项目\//,"归档/"),content:rewriteDocumentLinks(note.content,note.path,note.path.replace(/^项目\//,"归档/"),moves,paths),version:"v2"}));
+ const plan={moves,edits:originals.map((note,index)=>({path:note.path,target:notes[index].path,content:notes[index].content,expectedVersion:note.version})),checks:originals.map(({path,version})=>({path,version}))};
+ const fetchMock=vi.fn().mockRejectedValueOnce(TypeError("lost response"));vi.stubGlobal("fetch",fetchMock);
+ await expect(api.relocate(plan,originals)).rejects.toMatchObject({code:"network"});
+ const pending=(await store.records<{id:string}>("operation:"))[0].value;
+ fetchMock.mockResolvedValue(new Response(JSON.stringify({id:pending.id,status,completedMoves:moves,notes:status==="completed"?notes:[],backup:"backup",message:status==="failed"?"中断":null}),{status:200,headers:{"content-type":"application/json"}}));
+ await new BrowserApi(identity,vi.fn(),store).resumeOperations(vi.fn());
+ const drafts=await store.drafts();expect(drafts).toHaveLength(originals.length);
+ for(const path of ["首页.md","任务/工作/开发.md"])expect(drafts.find(d=>d.path===path)!.content).toBe(moved);
+ expect(parseCanvas(drafts.find(d=>d.path==="图.canvas")!.content).nodes[0].text).toBe(moved);
+ expect(drafts.find(d=>d.path==="归档/目标#草案.md")!.baseVersion).toBe(status==="completed"?"v2":"incomplete:v1");
+ expect(await store.records("operation:")).toEqual([]);expect(fetchMock).toHaveBeenCalledTimes(2);
+});

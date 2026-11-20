@@ -1,0 +1,219 @@
+// @vitest-environment jsdom
+import "../test/codemirror-dom";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { EditorView } from "@codemirror/view";
+import DesktopApp from "./desktop-app";
+import { TaskBoard } from "./task-board";
+import { MemoryVault } from "../test/memory-vault";
+import { WorkspaceRuntimeContext } from "../lib/workspace-runtime";
+import type { WorkspaceApi } from "../lib/vault-api";
+import { defaultTaskViewSettings, emptyWorkspace, workspaceStorageKey } from "../lib/workspace-state";
+import { parseTaskDocument, taskCategoryMarker } from "../lib/tasks";
+import { compareTaskOrder } from "../lib/task-board";
+vi.mock("../lib/mermaid", () => ({ renderMermaid: async () => "<svg />" }));
+beforeEach(() => { localStorage.clear(); vi.clearAllMocks(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+const path = "任务/工作/开发.md", other = "任务/生活/家务.md";
+function fixture(board = true) {
+  const vault = new MemoryVault();
+  vault.put(path, taskCategoryMarker + "\n\n# 开发\n\n- [ ] 第一项\n  - 备注：原始备注\n\n- [ ] 第二项\n\n- [ ] 第三项\n");
+  vault.put(other, taskCategoryMarker + "\n\n# 家务\n\n- [x] 其他分类\n");
+  vault.put("笔记.md", "# 原笔记\n\n持续编辑。");
+  const api: WorkspaceApi = { ...vault, status: async () => ({ vault: "board-vault", id: "board-tests", error: null }), read: vi.fn(vault.read), save: vi.fn(vault.save), writeDraft: vi.fn(vault.writeDraft), selectVault: vi.fn(), createVault: vi.fn(), chooseDirectory: vi.fn(), chooseFile: vi.fn(), importAttachment: vi.fn(), importAttachmentData: vi.fn(), image: vi.fn(), remove: vi.fn(), openAttachment: vi.fn(), openExternal: vi.fn(), openItem: vi.fn() };
+  const key = workspaceStorageKey("web","board-tests");
+  localStorage.setItem(key, JSON.stringify({ ...emptyWorkspace(), tabs: ["@tasks"], active: "@tasks", taskPath: path, taskCategory: path, taskGroup: "任务/工作", sidebarView: "tasks", tasks: { ...defaultTaskViewSettings, view: board ? "board" : "list" } }));
+  const mount = () => render(<WorkspaceRuntimeContext.Provider value={{ kind: "web", api }}><DesktopApp /></WorkspaceRuntimeContext.Provider>);
+  return { vault, api, key, mount };
+}
+async function ready() {
+  await screen.findByRole("heading", { name: "开发" });
+  await screen.findByRole("button", { name: "第一项" });
+}
+function card(title: string) { return screen.getByRole("button", { name: title }).closest<HTMLElement>("[data-task-card]")!; }
+async function action(title: string, text: string) {
+  const element = card(title);
+  fireEvent.click(within(element).getByLabelText("任务操作：" + title));
+  fireEvent.click(within(element).getByRole("button", { name: text }));
+}
+it("看板和列表按当前范围显示来源，单分类不留空白辅助行", async () => {
+  const { mount, vault } = fixture(); const original = vault.notes.get(path)!.content; mount(); await ready();
+  expect(card("第二项").querySelector(".board-card-meta")).toBeNull();
+  expect(card("第一项").querySelector('[title="有 Markdown 备注"]')).toBeTruthy();
+  expect(card("第二项").querySelector(".board-card-top .board-card-actions")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "第二项" }).title).toBe("第二项");
+  fireEvent.click(screen.getByRole("button", { name: "全部任务" }));
+  expect(card("第二项").querySelector(".board-card-source")?.textContent).toBe("工作 / 开发");
+  fireEvent.click(screen.getByRole("button", { name: "查看分组 工作" }));
+  expect(card("第二项").querySelector(".board-card-source")?.textContent).toBe("开发");
+  fireEvent.click(within(screen.getByRole("complementary")).getByRole("button", { name: "开发" }));
+  await screen.findByRole("heading", { name: "开发" });
+  expect(card("第二项").querySelector(".board-card-meta")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "列表" }));
+  const row = () => screen.getByRole("button", { name: /^第二项/ }).closest(".task-row")!;
+  expect(row().querySelector(".task-row-category")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "全部任务" }));
+  expect(row().querySelector(".task-row-category")?.textContent).toBe("工作 / 开发");
+  fireEvent.click(screen.getByRole("button", { name: "查看分组 工作" }));
+  expect(row().querySelector(".task-row-category")?.textContent).toBe("开发");
+  expect(vault.notes.get(path)!.content).toBe(original);
+});
+it("列表与看板一致提示逾期，已完成和无效日期不误报", async () => {
+  const { mount, vault } = fixture(false);
+  vault.put(path, taskCategoryMarker + "\n\n- [ ] 过期待办\n  - 结束日期：2000-01-01\n\n- [x] 过期已完成\n  - 结束日期：2000-01-01\n\n- [ ] 无效日期\n  - 结束日期：2000-02-30\n\n- [ ] 将来任务\n  - 结束日期：2999-01-01\n");
+  mount(); await screen.findByRole("button", { name: /过期待办/ });
+  const row = (title: string) => screen.getByRole("button", { name: new RegExp(title) }).closest(".task-row")!;
+  expect(row("过期待办").textContent).toContain("逾期 2000-01-01");
+  for (const title of ["过期已完成", "无效日期", "将来任务"]) expect(row(title).textContent).not.toContain("逾期");
+  fireEvent.click(screen.getByRole("button", { name: "看板" }));
+  expect(card("过期待办").textContent).toContain("逾期 2000-01-01");
+  for (const title of ["过期已完成", "无效日期", "将来任务"]) expect(card(title).textContent).not.toContain("逾期");
+});
+it("首次补ID、改状态和慢保存期间保持同一备注输入框及最新内容", async () => {
+  const { mount, vault, api } = fixture(); mount(); await ready();
+  fireEvent.click(screen.getByRole("button", { name: "第一项" }));
+  const input = await screen.findByLabelText("Markdown 备注") as HTMLTextAreaElement;
+  input.focus();
+  fireEvent.change(input, { target: { value: "持续 **编辑**\n\n- [ ] 检查链接" } });
+  input.setSelectionRange(3,3);
+  expect(screen.getByLabelText("Markdown 备注")).toBe(input); expect(document.activeElement).toBe(input);
+  fireEvent.change(screen.getByLabelText("任务状态"), { target: { value: "doing" } });
+  expect(screen.getByLabelText("Markdown 备注")).toBe(input);
+  const original = api.save;
+  let release!: () => void, started = false;
+  api.save = vi.fn(async (p,c,v) => { started = true; await new Promise<void>((resolve) => { release = resolve; }); return vault.save(p,c,v); });
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(started).toBe(true));
+  input.focus(); fireEvent.change(input, { target: { value: input.value + "\n保存期间的新输入" } });
+  api.save = original;
+  await act(async () => release());
+  expect(screen.getByLabelText("Markdown 备注")).toBe(input);
+  expect(input.value).toContain("保存期间的新输入");
+  await waitFor(() => expect(parseTaskDocument(vault.notes.get(path)!.content).tasks[0]).toMatchObject({ status: "doing", completed: false, remark: input.value }), { timeout: 4000 });
+});
+it("旧任务前方补排序导致偏移变化时，首次状态操作仍保留详情编辑器", async () => {
+  const { mount, vault } = fixture();
+  vault.put(path, taskCategoryMarker + "\n\n- [ ] 已有进行项\n  - 任务ID：existing-task\n  - 状态：进行中\n\n- [ ] 旧第二项\n  - 备注：保留输入\n");
+  mount(); await screen.findByRole("button", { name: "旧第二项" });
+  fireEvent.click(screen.getByRole("button", { name: "旧第二项" }));
+  const input = await screen.findByLabelText("Markdown 备注") as HTMLTextAreaElement;
+  input.focus(); input.setSelectionRange(2,2);
+  fireEvent.change(screen.getByLabelText("任务状态"), { target: { value:"doing" } });
+  expect(screen.getByLabelText("Markdown 备注")).toBe(input);
+  expect(input.value).toBe("保留输入"); expect(input.selectionStart).toBe(2);
+  fireEvent.change(input, { target: { value:"排序后继续输入" } });
+  await waitFor(() => expect(parseTaskDocument(vault.notes.get(path)!.content).tasks[1]).toMatchObject({status:"doing",remark:"排序后继续输入"}), {timeout:4000});
+});
+
+it("列内创建已完成任务，列表取消完成后回到待处理并且日期仍为空", async () => {
+  const { mount, vault } = fixture(); mount(); await ready();
+  fireEvent.click(screen.getByRole("button", { name: "在已完成添加任务" }));
+  const input = screen.getByLabelText("新建已完成任务");
+  fireEvent.change(input, { target: { value: "新卡片" } }); fireEvent.submit(input.closest("form")!);
+  await screen.findByRole("button", { name: "新卡片" });
+  expect(within(screen.getByRole("region", { name: "已完成列" })).getByRole("button", { name: "新卡片" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "列表" }));
+  fireEvent.click(screen.getByLabelText("完成任务：新卡片"));
+  await waitFor(() => expect((screen.getByLabelText("完成任务：新卡片") as HTMLInputElement).checked).toBe(false));
+  await waitFor(() => expect(parseTaskDocument(vault.notes.get(path)!.content).tasks.find((task) => task.title === "新卡片")).toMatchObject({ status: "todo", startDate: "", endDate: "" }), { timeout: 4000 });
+});
+it("单分类卡片上移可持久恢复，筛选与看板模式随知识库恢复", async () => {
+  const { mount, key, vault } = fixture(); let view = mount(); await ready();
+  await action("第三项","上移");
+  await waitFor(() => expect(Array.from(screen.getByRole("region", { name: "待处理列" }).querySelectorAll(".board-card-title")).map((node) => node.textContent)).toEqual(["第一项","第三项","第二项"]));
+  await waitFor(() => expect(parseTaskDocument(vault.notes.get(path)!.content).tasks.slice().sort(compareTaskOrder).map((task) => task.title)).toEqual(["第一项","第三项","第二项"]), { timeout: 4000 });
+  fireEvent.change(screen.getByRole("searchbox", { name: "搜索任务" }), { target: { value: "第三" } });
+  act(() => window.dispatchEvent(new Event("beforeunload", { cancelable: true })));
+  expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({ tasks: { view: "board", query: "第三" } });
+  view.unmount(); view = mount();
+  await screen.findByRole("button", { name: "第三项" });
+  expect((screen.getByRole("searchbox", { name: "搜索任务" }) as HTMLInputElement).value).toBe("第三");
+  expect(screen.queryByRole("button", { name: "第一项" })).toBeNull();
+});
+it("全部任务跨列只改来源分类，不建立全局排序且保留汇总范围", async () => {
+  const { mount, vault, api } = fixture(); mount(); await ready();
+  const unchanged = vault.notes.get(other)!.content;
+  fireEvent.click(screen.getByRole("button", { name: "全部任务" }));
+  await screen.findByRole("heading", { name: "全部任务" });
+  await action("第一项", "移至进行中");
+  await waitFor(() => expect(within(screen.getByRole("region", { name: "进行中列" })).getByRole("button", { name: "第一项" })).toBeTruthy());
+  expect(screen.getByRole("heading", { name: "全部任务" })).toBeTruthy();
+  await waitFor(() => expect(api.save).toHaveBeenCalled(), { timeout: 4000 });
+  expect(vault.notes.get(other)!.content).toBe(unchanged);
+  expect((api.save as ReturnType<typeof vi.fn>).mock.calls.every(([p]) => p === path)).toBe(true);
+  fireEvent.click(within(card("第一项")).getByLabelText("任务操作：第一项"));
+  expect(within(card("第一项")).queryByRole("button", { name: "上移" })).toBeNull();
+});
+it("切换任务看板保留笔记真实编辑器和在后台保存的编辑", async () => {
+  const { mount, vault } = fixture(false); mount(); await screen.findByRole("heading", { name: "开发" });
+  fireEvent.click(screen.getByRole("button", { name: "文件树" }));
+  fireEvent.click(await screen.findByRole("button", { name: "笔记.md" }));
+  const panel = await screen.findByRole("tabpanel", { name: "笔记.md" });
+  const editor = await waitFor(() => {
+    const element = panel.querySelector<HTMLElement>(".cm-editor"); expect(element).toBeTruthy();
+    return EditorView.findFromDOM(element!)!;
+  });
+  act(() => editor.dispatch({ changes: { from: editor.state.doc.length, insert: "\n新内容" }, selection: { anchor: 4 }, userEvent: "input.type" }));
+  fireEvent.click(screen.getByRole("button", { name: "任务管理" }));
+  fireEvent.click(screen.getByRole("button", { name: "看板" }));
+  fireEvent.click(screen.getByRole("tab", { name: /^笔记\.md/ }));
+  expect(EditorView.findFromDOM(screen.getByRole("tabpanel", { name: /^笔记\.md/ }).querySelector(".cm-editor")!)).toBe(editor);
+  expect(editor.state.selection.main.anchor).toBe(4);
+  await waitFor(() => expect(vault.notes.get("笔记.md")?.content).toContain("新内容"), { timeout: 4000 });
+});
+it("非法状态和重复ID仍可查看，不能误操作另一张卡片", async () => {
+  const { mount, vault } = fixture();
+  vault.put(path, taskCategoryMarker + "\n\n- [ ] 第一项\n  - 状态：未知列\n\n- [ ] 第二项\n  - 任务ID：duplicate\n\n- [ ] 第三项\n  - 任务ID：duplicate\n");
+  mount(); await screen.findByText(/字段需处理（1）/);
+  const section = screen.getByText(/字段需处理（1）/).closest("details")!;
+  fireEvent.click(within(section).getByText(/字段需处理（1）/));
+  fireEvent.click(within(section).getByRole("button", { name: /第一项/ }));
+  await screen.findByLabelText("Markdown 备注");
+  expect((screen.getByLabelText("任务状态") as HTMLSelectElement).disabled).toBe(true);
+  expect((screen.getByRole("button", { name: "打开分类文件" }) as HTMLButtonElement).disabled).toBe(false);
+});
+it("待恢复草稿不会被看板操作覆盖，恢复后可继续编辑", async () => {
+  const { mount, vault } = fixture();
+  const note = vault.notes.get(path)!;
+  vault.stored.set(path, { path, baseVersion: note.version, content: note.content + "\n- [ ] 草稿任务\n" });
+  mount(); await screen.findByText("发现恢复草稿：" + path);
+  expect(vault.stored.get(path)?.content).toContain("草稿任务");
+  fireEvent.click(screen.getByRole("button", { name: "恢复草稿" }));
+  await screen.findByRole("button", { name: "草稿任务" });
+  expect(vault.notes.get(path)!.content).not.toContain("草稿任务");
+});
+it("跨分类移动遇到目标相同ID时保持来源和目标，明确提示", async () => {
+  const { mount, vault } = fixture();
+  vault.put(path, taskCategoryMarker + "\n\n- [ ] 第一项\n  - 任务ID：same-id\n");
+  vault.put(other, taskCategoryMarker + "\n\n- [ ] 另一个任务\n  - 任务ID：same-id\n");
+  const original = vault.notes.get(other)!.content;
+  mount(); await ready(); fireEvent.click(screen.getByRole("button", { name: "第一项" }));
+  fireEvent.change(await screen.findByLabelText("任务分类"), { target: { value: other } });
+  await screen.findByText(/目标分类存在相同任务ID/);
+  expect(vault.notes.get(other)!.content).toBe(original); expect(vault.notes.get(path)!.content).toContain("第一项");
+});
+it("Pointer取消、无效落点和隐藏取消不写数据，有效落下才提交一次", async () => {
+  const note = taskCategoryMarker + "\n\n- [ ] A\n";
+  const item = { path, version: "v1", content: note, task: parseTaskDocument(note).tasks[0] };
+  const place = vi.fn(async () => true), onError = vi.fn();
+  const props = { items:[item], totals:[item], sorting:true, active:true, addDisabled:false, disabled:()=>false, fingerprint:note, scrolls:{}, onScroll:vi.fn(), onSelect:vi.fn(), onPlace:place, onAdd:vi.fn(async()=>true), onError };
+  const view = render(<TaskBoard {...props} />);
+  const target = screen.getByRole("region", { name: "进行中列" });
+  Object.defineProperty(document, "elementFromPoint", { configurable:true, value:vi.fn(() => target) });
+  const grip = screen.getByLabelText("拖动任务：A");
+  fireEvent.pointerDown(grip, { button:0, clientX:10, clientY:10 }); fireEvent.pointerMove(document, { clientX:70,clientY:70 }); fireEvent.pointerCancel(document); fireEvent.pointerUp(document, { clientX:70,clientY:70 }); expect(place).not.toHaveBeenCalled();
+  fireEvent.pointerDown(grip, { button:0,clientX:10,clientY:10 }); fireEvent.pointerMove(document, { clientX:70,clientY:70 });
+  view.rerender(<TaskBoard {...props} active={false} />); expect(document.body.style.userSelect).toBe(""); expect(place).not.toHaveBeenCalled();
+  view.rerender(<TaskBoard {...props} />);
+  fireEvent.pointerDown(grip, { button:0,clientX:10,clientY:10 }); fireEvent.pointerMove(document, { clientX:70,clientY:70 });
+  (document.elementFromPoint as ReturnType<typeof vi.fn>).mockReturnValue(null);
+  fireEvent.pointerUp(document, { clientX:70,clientY:70 }); expect(place).not.toHaveBeenCalled();
+  (document.elementFromPoint as ReturnType<typeof vi.fn>).mockReturnValue(target);
+  fireEvent.pointerDown(grip, { button:0,clientX:10,clientY:10 }); fireEvent.pointerMove(document, { clientX:70,clientY:70 });
+  view.rerender(<TaskBoard {...props} fingerprint="外部新内容" />); expect(onError).toHaveBeenCalled();
+  fireEvent.pointerUp(document, { clientX:70,clientY:70 }); expect(place).not.toHaveBeenCalled();
+  view.rerender(<TaskBoard {...props} />);
+  fireEvent.pointerDown(grip, { button:0,clientX:10,clientY:10 }); fireEvent.pointerMove(document, { clientX:70,clientY:70 });
+  fireEvent.pointerUp(document, { clientX:70,clientY:70 });
+  await waitFor(() => expect(place).toHaveBeenCalledTimes(1)); expect(place).toHaveBeenCalledWith(item,"doing",null);
+});

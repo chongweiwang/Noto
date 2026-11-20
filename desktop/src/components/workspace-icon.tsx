@@ -1,0 +1,58 @@
+import type { ReactNode } from "react";
+
+// A small, local line-icon set shared by the workspace controls.
+export type WorkspaceIconName = "file" | "folder" | "folder-open" | "canvas" | "drawing" | "pointer" | "eraser" | "graph" | "tag" | "chevron" | "new-file" | "new-folder" | "home" | "more" | "outline" | "sidebar" | "sun" | "moon" | "command" | "copy" | "close" | "pin" | "link" | "attachment" | "quote" | "code-block" | "list" | "checklist" | "table" | "rule" | "inline-code" | "image" | "text" | "sticky" | "group" | "undo" | "redo" | "fit" | "grid" | "heatmap" | "dashboard" | "refresh" | "plus" | "check" | "calendar" | "trash" | "save" | "grip";
+const shapes: Record<WorkspaceIconName, ReactNode> = {
+  file: <><path d="M6 2.75h6l4 4v10.5a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3.75a1 1 0 0 1 1-1Z"/><path d="M12 2.75v4h4M8 11h5M8 14h5"/></>,
+  folder: <path d="M2.75 5.75a1.5 1.5 0 0 1 1.5-1.5H8l1.6 1.8h6.15a1.5 1.5 0 0 1 1.5 1.5v7.7a1.5 1.5 0 0 1-1.5 1.5H4.25a1.5 1.5 0 0 1-1.5-1.5Z"/>,
+  "folder-open": <><path d="M3 8V5.75a1.5 1.5 0 0 1 1.5-1.5H8l1.6 1.8h5.9A1.5 1.5 0 0 1 17 7.5"/><path d="M4.1 8.4h12.8l-1.6 7.3a1.3 1.3 0 0 1-1.3 1H3.9a1.2 1.2 0 0 1-1.2-1.5Z"/></>,
+  canvas: <><rect x="2.75" y="3" width="14.5" height="14" rx="2"/><rect x="5.25" y="5.75" width="4" height="3.5" rx=".5"/><path d="M11.5 6h3M11.5 8.5h3M5.5 12h9M5.5 14.5h6"/></>,
+  drawing: <><path d="m4 14.5-.5 3 3-.5L16.8 6.7l-2.5-2.5L4 14.5ZM12.8 5.7l2.5 2.5M3.5 17.5h13"/></>,
+  pointer: <path d="M4 2.5 15 11l-4.5.6-2.3 4.5-1.4-4.5Z"/>,
+  eraser: <><path d="m3 12 7-8a2 2 0 0 1 3 0l3 3a2 2 0 0 1 0 3l-6 6H7ZM6 9l5 5M10 16h6"/></>,
+  graph: <><circle cx="10" cy="4.5" r="2.3"/><circle cx="4" cy="15" r="2.3"/><circle cx="16" cy="15" r="2.3"/><path d="m8.7 6.5-3.4 6.4m6-6.4 3.4 6.4M6.3 15h7.4"/></>,
+  tag: <><path d="M3.25 3.25h6l7.5 7.5-6 6-7.5-7.5z"/><circle cx="6.7" cy="6.7" r=".85"/></>,
+  chevron: <path d="m7.5 4.5 5 5.5-5 5.5"/>,
+  "new-file": <><path d="M5.5 2.75h6l3.5 3.5v4M11.5 2.75v3.5H15M5.5 2.75a1 1 0 0 0-1 1v12.5a1 1 0 0 0 1 1H10"/><path d="M14.5 12v6M11.5 15h6"/></>,
+  "new-folder": <><path d="M2.75 5.75a1.5 1.5 0 0 1 1.5-1.5H8l1.6 1.8h5.65a1.5 1.5 0 0 1 1.5 1.5v2.5M2.75 5.75v9.5a1.5 1.5 0 0 0 1.5 1.5H10"/><path d="M14.5 12v6M11.5 15h6"/></>,
+  home: <><path d="m3 9 7-6 7 6M5 8v8.5h10V8"/><path d="M8.5 16.5v-5h3v5"/></>,
+  more: <><circle cx="4.5" cy="10" r=".8"/><circle cx="10" cy="10" r=".8"/><circle cx="15.5" cy="10" r=".8"/></>,
+  outline: <><path d="M4 5h2m2 0h8M4 10h2m2 0h8M4 15h2m2 0h8"/></>,
+  sidebar: <><rect x="2.75" y="3.5" width="14.5" height="13" rx="2"/><path d="M7.5 3.5v13"/></>,
+  sun: <><circle cx="10" cy="10" r="3.3"/><path d="M10 1.8v2M10 16.2v2M1.8 10h2M16.2 10h2M4.2 4.2l1.4 1.4m8.8 8.8 1.4 1.4m0-11.6-1.4 1.4m-8.8 8.8-1.4 1.4"/></>,
+  moon: <path d="M16.2 12.5A6.8 6.8 0 0 1 7.5 3.8a6.8 6.8 0 1 0 8.7 8.7Z"/>,
+  command: <path d="M6.5 7.5H4.75a1.75 1.75 0 1 1 1.75-1.75v8.5A1.75 1.75 0 1 1 4.75 12.5h10.5a1.75 1.75 0 1 1-1.75 1.75v-8.5a1.75 1.75 0 1 1 1.75 1.75Z"/>,
+  copy: <><rect x="6.5" y="6.5" width="9.75" height="10.5" rx="1.5"/><path d="M13.5 6.5v-2A1.5 1.5 0 0 0 12 3H5a1.5 1.5 0 0 0-1.5 1.5V12A1.5 1.5 0 0 0 5 13.5h1.5"/></>,
+  close: <path d="m5 5 10 10M15 5 5 15"/>,
+  pin: <path d="m7 3 6 0-.6 4 2.4 2.5v1H5.2v-1L7.6 7ZM10 10.5V17"/>,
+  link: <><path d="M8 12 12 8M7.5 14H6a3.5 3.5 0 0 1 0-7h3M12.5 6H14a3.5 3.5 0 0 1 0 7h-3"/></>,
+  attachment: <path d="m7.5 10.5 4.7-4.7a2.1 2.1 0 0 1 3 3l-6.1 6.1a3.3 3.3 0 0 1-4.7-4.7l6.2-6.2"/>,
+  quote: <><path d="M8 6H4v5h4v2.2a2 2 0 0 1-2 2H5M16 6h-4v5h4v2.2a2 2 0 0 1-2 2h-1"/></>,
+  "inline-code": <path d="m7 6-4 4 4 4m6-8 4 4-4 4"/>,
+  "code-block": <><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><path d="m7.5 7-2.5 3 2.5 3M12.5 7l2.5 3-2.5 3"/></>,
+  list: <><path d="M8 5h8M8 10h8M8 15h8"/><circle cx="4.5" cy="5" r=".7"/><circle cx="4.5" cy="10" r=".7"/><circle cx="4.5" cy="15" r=".7"/></>,
+  checklist: <><rect x="2.75" y="3.5" width="4" height="4" rx=".6"/><path d="m3.7 5.4 1 1 1.8-1.9M9 5.5h8M3 12h4v4H3zM9 14h8"/></>,
+  table: <><rect x="2.5" y="3.5" width="15" height="13" rx="1.5"/><path d="M2.5 8h15M8 3.5v13M13 8v8.5"/></>,
+  rule: <><path d="M3 10h14"/><path d="M6 6h8M6 14h8" opacity=".4"/></>,
+  image: <><rect x="2.5" y="3.5" width="15" height="13" rx="2"/><circle cx="7" cy="7.5" r="1.4"/><path d="m3 14 4-4 3 2 3-3 4 5"/></>,
+  text: <path d="M3.5 4h13M10 4v12M7 16h6"/>,
+  sticky: <><path d="M4 3.5h12.5V13L13 16.5H4zM13 16.5V13h3.5"/><path d="M6.5 7h7M6.5 10h5"/></>,
+  group: <rect x="3" y="3" width="14" height="14" rx="2" strokeDasharray="3 2"/>,
+  undo: <><path d="M7 5 3 9l4 4M3 9h8a5 5 0 0 1 5 5v1"/></>,
+  redo: <><path d="m13 5 4 4-4 4M17 9H9a5 5 0 0 0-5 5v1"/></>,
+  fit: <path d="M7 3H3v4m10-4h4v4M3 13v4h4m10-4v4h-4"/>,
+  grid: <path d="M5 5h.01M10 5h.01M15 5h.01M5 10h.01M10 10h.01M15 10h.01M5 15h.01M10 15h.01M15 15h.01" strokeWidth="2.4"/>,
+  heatmap: <><rect x="3" y="4" width="14" height="13" rx="2"/><path d="M6 2.5v3M14 2.5v3M3 8h14"/><path d="M6.5 11h.01M10 11h.01M13.5 11h.01M6.5 14h.01M10 14h.01" strokeWidth="1.8"/><path d="M13.5 14h.01" strokeWidth="2.5"/></>,
+  dashboard: <><rect x="2.75" y="3.25" width="14.5" height="13.5" rx="2"/><path d="M6 13v-2m4 2V7m4 6V9" strokeWidth="1.8"/></>,
+  refresh: <><path d="M16 7a6.5 6.5 0 0 0-11-2L3 7m0 0V3m0 4h4M4 13a6.5 6.5 0 0 0 11 2l2-2m0 0v4m0-4h-4"/></>,
+  plus: <path d="M10 4v12M4 10h12"/>,
+  check: <path d="m4 10 4 4 8-9"/>,
+  calendar: <><rect x="3" y="4" width="14" height="13" rx="2"/><path d="M6 2.5v3M14 2.5v3M3 8h14"/></>,
+  trash: <><path d="M3.5 5.5h13M7 5.5V3.5h6v2M5 5.5l.8 11h8.4l.8-11M8 9v4.5m4-4.5v4.5"/></>,
+  save: <><path d="M4 3h10l3 3v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z"/><path d="M6 3v5h8V3M6 17v-6h8v6"/></>,
+  grip: <g fill="currentColor" stroke="none"><circle cx="7" cy="5" r="1"/><circle cx="13" cy="5" r="1"/><circle cx="7" cy="10" r="1"/><circle cx="13" cy="10" r="1"/><circle cx="7" cy="15" r="1"/><circle cx="13" cy="15" r="1"/></g>,
+};
+
+export function WorkspaceIcon({ name, size = 16, className }: { name: WorkspaceIconName; size?: number; className?: string }) {
+  return <svg className={className} aria-hidden="true" width={size} height={size} viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" focusable="false">{shapes[name]}</svg>;
+}

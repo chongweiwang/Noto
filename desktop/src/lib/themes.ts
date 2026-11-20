@@ -1,0 +1,23 @@
+// The original five palettes are adapted from Noteriv's built-in themes (MIT).
+export type ThemeMode = "dark" | "light";
+export type ThemeId = "catppuccin-mocha" | "catppuccin-latte" | "nord" | "github-dark" | "solarized-light" | "paper-ink" | "jade-mist" | "pine-forest";
+export type ThemeColors = {primary:string;secondary:string;tertiary:string;surface:string;hover:string;border:string;text:string;subtext:string;muted:string;accent:string;onAccent:string;green:string;red:string;yellow:string;mauve:string;peach:string;warning:string;danger:string};
+export type ThemeDefinition = {id:ThemeId;name:string;mode:ThemeMode;description:string;colors:ThemeColors};
+
+export const themes:ThemeDefinition[] = [
+ {id:"catppuccin-mocha",name:"Catppuccin Mocha",mode:"dark",description:"柔和紫灰",colors:{primary:"#1e1e2e",secondary:"#181825",tertiary:"#252537",surface:"#313244",hover:"#45475a",border:"#313244",text:"#cdd6f4",subtext:"#a6adc8",muted:"#9298ae",accent:"#89b4fa",onAccent:"#181825",green:"#a6e3a1",red:"#f38ba8",yellow:"#f9e2af",mauve:"#cba6f7",peach:"#fab387",warning:"#f9e2af",danger:"#f38ba8"}},
+ {id:"catppuccin-latte",name:"Catppuccin Latte",mode:"light",description:"柔和浅色",colors:{primary:"#eff1f5",secondary:"#e6e9ef",tertiary:"#ccd0da",surface:"#ccd0da",hover:"#bdc1cc",border:"#bcc0cc",text:"#4c4f69",subtext:"#5c5f77",muted:"#606579",accent:"#1e66f5",onAccent:"#ffffff",green:"#2f7c24",red:"#d20f39",yellow:"#df8e1d",mauve:"#8839ef",peach:"#fe640b",warning:"#87560c",danger:"#b0243e"}},
+ {id:"nord",name:"Nord",mode:"dark",description:"冷灰蓝",colors:{primary:"#2e3440",secondary:"#272c36",tertiary:"#3b4252",surface:"#3b4252",hover:"#4c566a",border:"#4c566a",text:"#eceff4",subtext:"#d8dee9",muted:"#a6b3c7",accent:"#88c0d0",onAccent:"#1d2530",green:"#a3be8c",red:"#ee8b8e",yellow:"#ebcb8b",mauve:"#c7a6c2",peach:"#e2a57c",warning:"#ebcb8b",danger:"#ee8b8e"}},
+ {id:"github-dark",name:"GitHub Dark",mode:"dark",description:"中性深灰",colors:{primary:"#0d1117",secondary:"#010409",tertiary:"#161b22",surface:"#21262d",hover:"#30363d",border:"#30363d",text:"#e6edf3",subtext:"#c9d1d9",muted:"#9ca6b1",accent:"#58a6ff",onAccent:"#07101c",green:"#56d364",red:"#ff7b72",yellow:"#e3b341",mauve:"#d2a8ff",peach:"#ffa657",warning:"#e3b341",danger:"#ff7b72"}},
+ {id:"solarized-light",name:"Solarized Light",mode:"light",description:"暖米色",colors:{primary:"#fdf6e3",secondary:"#eee8d5",tertiary:"#e0dbc8",surface:"#e7e1cc",hover:"#d3cdb8",border:"#c7c0aa",text:"#435a61",subtext:"#52686e",muted:"#52676d",accent:"#176ca2",onAccent:"#ffffff",green:"#526a00",red:"#b52e27",yellow:"#8b6600",mauve:"#575ba9",peach:"#ad4017",warning:"#795900",danger:"#a62c29"}},
+ {id:"paper-ink",name:"纸墨",mode:"light",description:"暖白与赤陶",colors:{primary:"#fbf8f1",secondary:"#f2ece0",tertiary:"#ede4d5",surface:"#e9e0d1",hover:"#e2d4c1",border:"#cdbfa9",text:"#302822",subtext:"#58483b",muted:"#69574a",accent:"#914120",onAccent:"#ffffff",green:"#3a652d",red:"#a23431",yellow:"#795514",mauve:"#754475",peach:"#9a431b",warning:"#795514",danger:"#a23431"}},
+ {id:"jade-mist",name:"雾青",mode:"light",description:"银灰与青绿",colors:{primary:"#f2f8f6",secondary:"#e5f0eb",tertiary:"#dcebe5",surface:"#d5e7df",hover:"#c8ded4",border:"#b4cbc0",text:"#213633",subtext:"#385853",muted:"#46645e",accent:"#17645b",onAccent:"#ffffff",green:"#32603a",red:"#a03644",yellow:"#795b16",mauve:"#664e8c",peach:"#8b4a1f",warning:"#735313",danger:"#a03644"}},
+ {id:"pine-forest",name:"松林",mode:"dark",description:"墨绿与浅金",colors:{primary:"#19231f",secondary:"#131d19",tertiary:"#222f29",surface:"#293931",hover:"#374b40",border:"#3c5046",text:"#e6eee6",subtext:"#b8cbbf",muted:"#a1b7a9",accent:"#91d8ac",onAccent:"#13261d",green:"#91d8ac",red:"#f49a98",yellow:"#e7c786",mauve:"#cdb0e1",peach:"#f0b493",warning:"#e7c786",danger:"#f49a98"}},
+];
+export const defaultDarkTheme:ThemeId="catppuccin-mocha",defaultLightTheme:ThemeId="catppuccin-latte";
+export function isThemeId(value:unknown):value is ThemeId{return typeof value==="string"&&themes.some(theme=>theme.id===value);}
+export function getTheme(value:unknown):ThemeDefinition{return themes.find(theme=>theme.id===(value==="light"?defaultLightTheme:value==="dark"?defaultDarkTheme:value))??themes[0];}
+export function themeVariables(id:ThemeId):Record<string,string>{
+ const c=getTheme(id).colors;
+ return {"--bg-primary":c.primary,"--bg-secondary":c.secondary,"--bg-tertiary":c.tertiary,"--bg-surface":c.surface,"--bg-hover":c.hover,"--border":c.border,"--text-primary":c.text,"--text-secondary":c.subtext,"--text-muted":c.muted,"--accent":c.accent,"--accent-foreground":c.onAccent,"--green":c.green,"--red":c.red,"--yellow":c.yellow,"--mauve":c.mauve,"--peach":c.peach,"--warning-text":c.warning,"--danger-text":c.danger};
+}

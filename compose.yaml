@@ -1,0 +1,36 @@
+services:
+  noto:
+    image: "${NOTO_IMAGE:-noto:local}"
+    build: .
+    user: "${NOTO_UID:-10001}:${NOTO_GID:-10001}"
+    ports:
+      - "${NOTO_BIND_IP:-127.0.0.1}:${NOTO_PORT:-3457}:3457"
+    environment:
+      NOTO_PASSWORD_FILE: /run/secrets/noto_password
+      NOTO_ALLOW_SHORT_PASSWORD: "${NOTO_ALLOW_SHORT_PASSWORD:-false}"
+      NOTO_PUBLIC_ORIGIN: "${NOTO_PUBLIC_ORIGIN:-}"
+      NOTO_LOCAL_ORIGIN: "${NOTO_LOCAL_ORIGIN:-}"
+      NOTO_SECURE_COOKIE: "${NOTO_SECURE_COOKIE:-false}"
+    volumes:
+      - type: bind
+        source: "${NOTO_VAULT_DIR:?请设置知识库绝对路径 NOTO_VAULT_DIR}"
+        target: /vault
+        bind:
+          create_host_path: false
+      - type: bind
+        source: "${NOTO_DATA_DIR:?请设置服务状态目录 NOTO_DATA_DIR}"
+        target: /data
+        bind:
+          create_host_path: false
+    secrets:
+      - noto_password
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+    stop_grace_period: 30s
+secrets:
+  noto_password:
+    file: "${NOTO_PASSWORD_FILE:?请设置口令文件绝对路径 NOTO_PASSWORD_FILE}"

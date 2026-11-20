@@ -1,0 +1,33 @@
+# docker compose --env-file .env -f compose.yaml -f deploy/compose.https.yaml up -d
+# Compose !reset removes the backend HTTP publication; only the proxy is exposed.
+services:
+  noto:
+    ports: !reset []
+    environment:
+      NOTO_PUBLIC_ORIGIN: "https://${NOTO_HTTPS_HOST:?请设置局域网 IP}:${NOTO_HTTPS_PORT:-38443}"
+      NOTO_SECURE_COOKIE: "true"
+  proxy:
+    image: "${CADDY_IMAGE:-caddy:2-alpine}"
+    user: "${NOTO_UID:-10001}:${NOTO_GID:-10001}"
+    depends_on:
+      noto:
+        condition: service_healthy
+    ports:
+      - "${NOTO_BIND_IP:-127.0.0.1}:${NOTO_HTTPS_PORT:-38443}:8443"
+    environment:
+      NOTO_HTTPS_HOST: "${NOTO_HTTPS_HOST:?请设置局域网 IP}"
+      XDG_DATA_HOME: /certificates
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - type: bind
+        source: "${NOTO_TLS_DIR:?请设置测试证书存储目录}"
+        target: /certificates
+        bind:
+          create_host_path: false
+    read_only: true
+    tmpfs:
+      - /config:size=16m,mode=1777
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped

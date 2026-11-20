@@ -1,0 +1,11 @@
+{
+  "name": "noto-workspace",
+  "private": true,
+  "scripts": {
+    "prepare:demo": "node scripts/prepare-demo.mjs",
+    "build:frontend": "npm --prefix desktop run build:next",
+    "desktop:dev": "npm --prefix desktop run tauri -- dev",
+    "web:dev": "cargo run -p noto-server"
+  }
+}
+

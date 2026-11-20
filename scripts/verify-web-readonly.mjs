@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import { readFile, stat } from "node:fs/promises";
+import path from "node:path";
+
+const [origin, passwordFile, vault] = process.argv.slice(2);
+if (!origin || !passwordFile || !vault) throw new Error("用法：node scripts/verify-web-readonly.mjs <只读测试服务地址> <测试口令文件> <隔离知识库目录>");
+await stat(path.join(vault, ".noto-test-fixture"));
+const before = await readFile(path.join(vault, "欢迎.md"));
+const login = await fetch(new URL("/api/login", origin), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: (await readFile(passwordFile, "utf8")).trimEnd() }) });
+assert.equal(login.status, 200);
+const cookie = login.headers.get("set-cookie").split(";")[0], csrf = (await login.json()).csrf;
+const headers = { cookie, "x-noto-csrf": csrf, "content-type": "application/json" };
+const noteUrl = new URL(`/api/note?path=${encodeURIComponent("欢迎.md")}`, origin);
+const note = await (await fetch(noteUrl, { headers })).json();
+const saved = await fetch(noteUrl, { method: "PUT", headers, body: JSON.stringify({ content: "不得写入", expectedVersion: note.version }) });
+assert.equal(saved.status, 403); assert.equal((await saved.json()).code, "permission");
+const created = await fetch(new URL("/api/note", origin), { method: "POST", headers, body: JSON.stringify({ path: "不应创建.md", content: "禁止" }) });
+assert.equal(created.status, 403);
+assert.deepEqual(await readFile(path.join(vault, "欢迎.md")), before);
+process.stdout.write(JSON.stringify({ result: "passed", readonly: true, reads: "ok", save: "permission", create: "permission", originalBytesPreserved: true }, null, 2) + "\n");
