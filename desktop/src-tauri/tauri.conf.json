@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Noto Prototype",
+  "productName": "Noto",
   "version": "0.1.0",
   "identifier": "dev.noto.prototype",
   "build": {
