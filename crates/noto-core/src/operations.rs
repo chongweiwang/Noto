@@ -17,7 +17,7 @@ pub struct VaultEntry {
 
 pub(crate) fn validate_relative(path: &str) -> Result<&Path, VaultError> {
     if path.contains(['\\', ':']) || path.chars().any(char::is_control)
-        || path.split('/').any(|part| part.is_empty() || part == "." || part == ".." || part == super::WRITE_LOCK_NAME || part == super::history::HISTORY_DIR || part == super::webdav::STATE_DIR || part.eq_ignore_ascii_case(super::activity::ACTIVITY_DIR)) {
+        || path.split('/').any(|part| part.is_empty() || part == "." || part == ".." || part == super::WRITE_LOCK_NAME || part == super::history::HISTORY_DIR || part == super::webdav::STATE_DIR || part.eq_ignore_ascii_case(super::activity::LEGACY_ACTIVITY_DIR)) {
         return Err(VaultError::InvalidPath);
     }
     let path = Path::new(path);
@@ -113,7 +113,6 @@ impl Vault {
         let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
         file.write_all(normalized.as_bytes())?;
         file.sync_all()?;
-        self.record_note_activity(relative, super::activity::ActivityKind::Created);
         Ok(Note {
             path: relative.to_owned(),
             version: content_version(normalized.as_bytes()),

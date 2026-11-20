@@ -148,23 +148,18 @@ async fn storage_diagnostics_checks_configured_paths_and_requires_csrf() {
 }
 
 #[tokio::test]
-async fn note_activity_counts_creates_and_edits_and_requires_session() {
-    use std::time::{SystemTime, UNIX_EPOCH};
+async fn note_activity_counts_file_dates_and_requires_session() {
+    use std::{fs::FileTimes, time::{Duration, UNIX_EPOCH}};
     let fixture = Fixture::new();
-    fs::write(fixture.file("existing.md"), "原文").unwrap();
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as u64;
-    let request = json!({"dayStarts":[now - 60000, now + 60000]});
+    let file = fs::File::create(fixture.file("existing.md")).unwrap();
+    file.set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_millis(86_400_001))).unwrap();
+    let request = json!({"dayStarts":[86_400_000, 172_800_000]});
     let guest = (String::new(), String::new());
     assert_eq!(fixture.send(&guest, Method::POST, "/api/note-activity", request.clone()).await.status(), StatusCode::UNAUTHORIZED);
     let session = fixture.login().await;
-    let created = fixture.send(&session, Method::POST, "/api/note", json!({"path":"new.md","content":"新建"})).await;
-    assert_eq!(created.status(), StatusCode::OK);
-    let original = body(fixture.send(&session, Method::GET, "/api/note?path=existing.md", Value::Null).await).await;
-    let edited = fixture.send(&session, Method::PUT, "/api/note?path=existing.md", json!({"expectedVersion":original["version"],"content":"改动"})).await;
-    assert_eq!(edited.status(), StatusCode::OK);
     let activity = fixture.send(&session, Method::POST, "/api/note-activity", request).await;
     assert_eq!(activity.status(), StatusCode::OK);
-    assert_eq!(body(activity).await, json!([{"created":1,"edited":1}]));
+    assert_eq!(body(activity).await, json!([{"created":0,"edited":1}]));
 }
 fn encoded(path: &str) -> String {
     path.as_bytes()

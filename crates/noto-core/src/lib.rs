@@ -195,8 +195,7 @@ impl Vault {
         }
         check_document_size(&path, output.len())?;
         let permissions = fs::metadata(&path)?.permissions();
-        let changed_markdown = current != output && is_markdown_path(&path);
-        if changed_markdown {
+        if current != output && is_markdown_path(&path) {
             self.record_history(relative, &current, false)?;
         }
         AtomicFile::new(&path, AllowOverwrite)
@@ -206,9 +205,6 @@ impl Vault {
                 Ok::<(), io::Error>(())
             })
             .map_err(|error| VaultError::Io(error.into()))?;
-        if changed_markdown {
-            self.record_note_activity(relative, activity::ActivityKind::Edited);
-        }
         Ok(Note {
             path: relative.to_owned(),
             content: normalized,

@@ -1,114 +1,41 @@
-use crate::{is_markdown_path, operations::validate_relative, Vault, VaultError};
-use serde::{Deserialize, Serialize};
+use crate::{is_markdown_path, Vault, VaultError};
+use serde::Serialize;
 use std::{
-    collections::{hash_map::Entry, HashMap},
-    fs::{self, File, OpenOptions},
-    io::{self, BufRead, BufReader, Write},
-    path::{Path, PathBuf},
+    fs, io,
+    path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-pub(crate) const ACTIVITY_DIR: &str = ".noto-activity";
+// Keep older activity files outside the public workspace paths.
+pub(crate) const LEGACY_ACTIVITY_DIR: &str = ".noto-activity";
 const DAY_MS: u64 = 24 * 60 * 60 * 1000;
-const RETAIN_DAYS: u64 = 370;
 
-#[derive(Clone, Copy, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum ActivityKind {
-    Created,
-    Edited,
-}
-
-#[derive(Deserialize, Serialize)]
-struct Record {
-    at: u64,
-    path: String,
-    kind: ActivityKind,
-}
-
-#[derive(Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct NoteActivityDay {
     pub created: usize,
     pub edited: usize,
 }
 
-fn log_path(directory: &Path, day: u64) -> PathBuf {
-    directory.join(format!("{day}.jsonl"))
+fn day_bucket(day_starts: &[u64], time: io::Result<SystemTime>) -> Option<usize> {
+    let elapsed = time.ok()?.duration_since(UNIX_EPOCH).ok()?;
+    let millis = u64::try_from(elapsed.as_millis()).ok()?;
+    let index = day_starts
+        .partition_point(|start| *start <= millis)
+        .checked_sub(1)?;
+    (index + 1 < day_starts.len()).then_some(index)
 }
 
-fn regular_log(path: &Path) -> Result<bool, VaultError> {
-    match fs::symlink_metadata(path) {
-        Ok(meta) if meta.is_file() && !meta.file_type().is_symlink() => Ok(true),
-        Ok(_) => Err(VaultError::InvalidPath),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error.into()),
+fn count_note(days: &mut [NoteActivityDay], created: Option<usize>, modified: Option<usize>) {
+    if let Some(index) = created {
+        days[index].created += 1;
     }
-}
-
-fn visible_markdown(path: &str) -> bool {
-    !path.split('/').any(|part| part.starts_with('.'))
-        && validate_relative(path).is_ok_and(is_markdown_path)
+    if let Some(index) = modified.filter(|index| Some(*index) != created) {
+        days[index].edited += 1;
+    }
 }
 
 impl Vault {
-    fn activity_directory(&self, create: bool) -> Result<Option<PathBuf>, VaultError> {
-        let directory = self.root().join(ACTIVITY_DIR);
-        if create {
-            match fs::create_dir(&directory) {
-                Ok(()) => (),
-                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => (),
-                Err(error) => return Err(error.into()),
-            }
-        }
-        match fs::symlink_metadata(&directory) {
-            Ok(meta) if meta.is_dir() && !meta.file_type().is_symlink() => Ok(Some(directory)),
-            Ok(_) => Err(VaultError::InvalidPath),
-            Err(error) if !create && error.kind() == io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    // The caller already holds the vault write lock and has committed the note.
-    pub(crate) fn record_note_activity(&self, relative: &str, kind: ActivityKind) {
-        if !visible_markdown(relative) {
-            return;
-        }
-        let at = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
-        if let Err(error) = self.append_note_activity(Record {
-            at,
-            path: relative.to_owned(),
-            kind,
-        }) {
-            eprintln!("Noto note activity write failed: {error}");
-        }
-    }
-
-    fn append_note_activity(&self, record: Record) -> Result<(), VaultError> {
-        let directory = self
-            .activity_directory(true)?
-            .ok_or(VaultError::InvalidPath)?;
-        let day = record.at / DAY_MS;
-        let path = log_path(&directory, day);
-        let existing = regular_log(&path)?;
-        // A leading newline isolates an interrupted append from the next record.
-        let mut line = vec![b'\n'];
-        serde_json::to_writer(&mut line, &record).map_err(io::Error::other)?;
-        line.push(b'\n');
-        OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(path)?
-            .write_all(&line)?;
-        if !existing {
-            prune(&directory, day.saturating_sub(RETAIN_DAYS));
-        }
-        Ok(())
-    }
-
-    /// Count distinct notes between successive UTC boundaries of local calendar days.
+    /// Count current Markdown file timestamps within the supplied local-day boundaries.
     pub fn note_activity(&self, day_starts: &[u64]) -> Result<Vec<NoteActivityDay>, VaultError> {
         if !(2..=366).contains(&day_starts.len())
             || !day_starts.windows(2).all(|days| days[0] < days[1])
@@ -116,183 +43,124 @@ impl Vault {
         {
             return Err(VaultError::InvalidPath);
         }
-        let _guard = self.writes.lock().map_err(|_| VaultError::LockPoisoned)?;
-        let mut buckets = vec![HashMap::new(); day_starts.len() - 1];
-        let Some(directory) = self.activity_directory(false)? else {
-            return Ok(buckets.iter().map(|_| NoteActivityDay::default()).collect());
-        };
-        let from = day_starts[0];
-        let until = day_starts[day_starts.len() - 1];
-        for day in from / DAY_MS..=(until - 1) / DAY_MS {
-            let path = log_path(&directory, day);
-            if !regular_log(&path)? {
+        let mut days = vec![NoteActivityDay::default(); day_starts.len() - 1];
+        let mut entries = self.list()?;
+        while let Some(entry) = entries.pop() {
+            if entry.issue.is_some() {
                 continue;
             }
-            for line in BufReader::new(File::open(path)?).split(b'\n') {
-                let Ok(record) = serde_json::from_slice::<Record>(&line?) else {
-                    continue;
-                };
-                if record.at < from
-                    || record.at >= until
-                    || record.at / DAY_MS != day
-                    || !visible_markdown(&record.path)
-                {
-                    continue;
-                }
-                let bucket = day_starts.partition_point(|&start| start <= record.at) - 1;
-                match buckets[bucket].entry(record.path) {
-                    Entry::Vacant(slot) => {
-                        slot.insert(record.kind);
-                    }
-                    Entry::Occupied(mut slot) if matches!(record.kind, ActivityKind::Created) => {
-                        slot.insert(record.kind);
-                    }
-                    Entry::Occupied(_) => (),
-                }
+            if entry.is_directory {
+                entries.extend(entry.children);
+                continue;
             }
+            if !is_markdown_path(Path::new(&entry.path)) {
+                continue;
+            }
+            let metadata = match self
+                .item_path(&entry.path)
+                .and_then(|path| fs::symlink_metadata(path).map_err(VaultError::from))
+            {
+                Ok(metadata) if metadata.is_file() => metadata,
+                Ok(_) | Err(VaultError::InvalidPath) => continue,
+                Err(VaultError::Io(error)) if error.kind() == io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
+            count_note(
+                &mut days,
+                day_bucket(day_starts, metadata.created()),
+                day_bucket(day_starts, metadata.modified()),
+            );
         }
-        Ok(buckets
-            .into_iter()
-            .map(|bucket| {
-                let created = bucket
-                    .values()
-                    .filter(|kind| matches!(kind, ActivityKind::Created))
-                    .count();
-                NoteActivityDay {
-                    created,
-                    edited: bucket.len() - created,
-                }
-            })
-            .collect())
-    }
-}
-
-fn prune(directory: &Path, before: u64) {
-    let Ok(entries) = fs::read_dir(directory) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let Some(day) = name
-            .to_str()
-            .and_then(|name| name.strip_suffix(".jsonl"))
-            .and_then(|name| name.parse::<u64>().ok())
-        else {
-            continue;
-        };
-        if day < before
-            && entry.path() == log_path(directory, day)
-            && entry.file_type().is_ok_and(|kind| kind.is_file())
-        {
-            let _ = fs::remove_file(entry.path());
-        }
+        Ok(days)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{fs::FileTimes, time::Duration};
 
     #[test]
-    fn saves_count_distinct_markdown_notes_after_success() {
-        let directory = tempfile::tempdir().unwrap();
-        fs::write(directory.path().join("现有.md"), "原文").unwrap();
-        fs::write(directory.path().join("未改.md"), "未改").unwrap();
-        let vault = Vault::open(directory.path()).unwrap();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as u64;
-        let range = [now - DAY_MS, now + DAY_MS];
+    fn timestamp_boundaries_and_same_day_creation_take_precedence() {
+        let boundaries = [DAY_MS, 2 * DAY_MS, 3 * DAY_MS];
+        let bucket = |ms| day_bucket(&boundaries, Ok(UNIX_EPOCH + Duration::from_millis(ms)));
+        assert_eq!(bucket(DAY_MS - 1), None);
+        assert_eq!(bucket(DAY_MS), Some(0));
+        assert_eq!(bucket(2 * DAY_MS - 1), Some(0));
+        assert_eq!(bucket(2 * DAY_MS), Some(1));
+        assert_eq!(bucket(3 * DAY_MS), None);
         assert_eq!(
-            vault.note_activity(&range).unwrap(),
-            vec![NoteActivityDay::default()]
+            day_bucket(&boundaries, Err(io::ErrorKind::Unsupported.into())),
+            None
         );
-        let created = vault.create_note("新建.markdown", "正文").unwrap();
-        let saved = vault
-            .save_note(&created.path, "新内容", &created.version)
-            .unwrap();
-        vault
-            .save_note(&saved.path, "再次保存", &saved.version)
-            .unwrap();
-        let original = vault.read_note("现有.md").unwrap();
-        assert!(vault.save_note(&original.path, "冲突", "错版").is_err());
-        let edited = vault
-            .save_note(&original.path, "修改", &original.version)
-            .unwrap();
-        vault
-            .save_note(&edited.path, "继续修改", &edited.version)
-            .unwrap();
-        let unchanged = vault.read_note("未改.md").unwrap();
-        vault
-            .save_note(&unchanged.path, &unchanged.content, &unchanged.version)
-            .unwrap();
-        vault.create_note("看板.canvas", "{}").unwrap();
 
-        let vault = Vault::open(directory.path()).unwrap();
+        let mut days = vec![NoteActivityDay::default(); 2];
+        count_note(&mut days, Some(0), Some(0));
+        count_note(&mut days, Some(0), Some(1));
+        count_note(&mut days, None, Some(1));
         assert_eq!(
-            vault.note_activity(&range).unwrap(),
-            vec![NoteActivityDay {
-                created: 1,
-                edited: 1
-            }]
+            days,
+            [
+                NoteActivityDay {
+                    created: 2,
+                    edited: 0
+                },
+                NoteActivityDay {
+                    created: 0,
+                    edited: 2
+                }
+            ]
         );
-        assert!(vault.item_path(ACTIVITY_DIR).is_err());
-        assert!(vault
-            .list()
-            .unwrap()
-            .iter()
-            .all(|entry| entry.name != ACTIVITY_DIR));
     }
 
     #[test]
-    fn local_midnight_can_split_a_utc_log_and_corrupt_tail_does_not_hide_new_records() {
+    fn reads_disk_metadata_and_leaves_old_activity_files_alone() {
         let directory = tempfile::tempdir().unwrap();
-        let vault = Vault::open(directory.path()).unwrap();
-        let midnight = 2 * DAY_MS - 8 * 60 * 60 * 1000;
+        let root = directory.path();
+        let vault = Vault::open(root).unwrap();
+        let created = vault.create_note("新建.md", "旧内容").unwrap();
         vault
-            .append_note_activity(Record {
-                at: midnight - 1,
-                path: "项目.md".into(),
-                kind: ActivityKind::Edited,
-            })
+            .save_note("新建.md", "新内容", &created.version)
             .unwrap();
-        let path = log_path(&vault.root().join(ACTIVITY_DIR), midnight / DAY_MS);
-        OpenOptions::new()
-            .append(true)
-            .open(path)
-            .unwrap()
-            .write_all(b"{\"at\":")
+        assert!(!root.join(LEGACY_ACTIVITY_DIR).exists());
+        let legacy = root.join(LEGACY_ACTIVITY_DIR);
+        fs::create_dir(&legacy).unwrap();
+        fs::write(legacy.join("old.jsonl"), "old log").unwrap();
+
+        fs::create_dir(root.join("项目")).unwrap();
+        let set_modified = |relative: &str| {
+            let path = root.join(relative);
+            let file = fs::File::create(path).unwrap();
+            file.set_times(
+                FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_millis(DAY_MS + 1)),
+            )
             .unwrap();
-        vault
-            .append_note_activity(Record {
-                at: midnight,
-                path: "项目.md".into(),
-                kind: ActivityKind::Edited,
-            })
-            .unwrap();
-        vault
-            .append_note_activity(Record {
-                at: 2 * DAY_MS,
-                path: "项目.md".into(),
-                kind: ActivityKind::Edited,
-            })
-            .unwrap();
+        };
+        set_modified("项目/既有.markdown");
+        set_modified(".hidden.md");
+        set_modified(".noto-activity/ignored.md");
+        set_modified("画布.canvas");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("项目/既有.markdown"), root.join("alias.md")).unwrap();
+
+        let range = [DAY_MS, 2 * DAY_MS];
         assert_eq!(
-            vault
-                .note_activity(&[midnight - DAY_MS, midnight, midnight + DAY_MS])
-                .unwrap(),
-            vec![
-                NoteActivityDay {
-                    created: 0,
-                    edited: 1
-                },
-                NoteActivityDay {
-                    created: 0,
-                    edited: 1
-                },
-            ]
+            vault.note_activity(&range).unwrap(),
+            [NoteActivityDay {
+                created: 0,
+                edited: 1
+            }]
         );
-        assert!(vault.note_activity(&[midnight, midnight]).is_err());
+        fs::remove_file(root.join("项目/既有.markdown")).unwrap();
+        assert_eq!(
+            vault.note_activity(&range).unwrap(),
+            [NoteActivityDay::default()]
+        );
+        assert!(vault.note_activity(&[DAY_MS, DAY_MS]).is_err());
+        assert!(vault.item_path(".noto-activity/old.jsonl").is_err());
+        assert_eq!(
+            fs::read_to_string(legacy.join("old.jsonl")).unwrap(),
+            "old log"
+        );
     }
 }

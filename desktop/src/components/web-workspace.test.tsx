@@ -87,14 +87,14 @@ describe("共享网页工作区", () => {
     expect(within(heatmap.getByRole("group", { name: "按周排列的笔记热力图" })).getAllByRole("button")).toHaveLength(365);
     const date = await heatmap.findByRole("button", { name: today + "，2 篇笔记" });
     expect(date.dataset.heat).toBe("2");
-    expect(heatmap.getByText("新增 1 篇 · 修改 1 篇")).toBeTruthy();
+    expect(heatmap.getByText("创建 1 篇 · 最近修改 1 篇")).toBeTruthy();
     expect(noteActivity.mock.calls[0][0]).toHaveLength(366);
     const lastWeek = localDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 7));
     fireEvent.keyDown(date, { key: "ArrowLeft" });
     const earlier = heatmap.getByRole("button", { name: lastWeek + "，4 篇笔记" });
     expect(document.activeElement).toBe(earlier);
     expect(earlier.getAttribute("aria-pressed")).toBe("true");
-    expect(heatmap.getByText("新增 0 篇 · 修改 4 篇")).toBeTruthy();
+    expect(heatmap.getByText("创建 0 篇 · 最近修改 4 篇")).toBeTruthy();
     fireEvent.keyDown(earlier, { key: "Escape" });
     expect(screen.queryByRole("dialog", { name: "笔记热力图" })).toBeNull();
     expect(view()).toBe(originalEditor);

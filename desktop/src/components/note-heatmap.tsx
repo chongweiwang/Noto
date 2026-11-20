@@ -33,7 +33,7 @@ export function NoteHeatmap({ revision }: { revision: number }) {
   useEffect(() => {
     let alive = true;
     if (!api.noteActivity) {
-      setResult({ date: today, error: "当前版本无法读取笔记活动" });
+      setResult({ date: today, error: "当前版本无法统计笔记文件日期" });
       return;
     }
     void api.noteActivity(dayStarts).then(data => {
@@ -55,7 +55,7 @@ export function NoteHeatmap({ revision }: { revision: number }) {
 
   const activeDays = activity?.filter(day => total(day) > 0).length;
   return <div className="note-heatmap">
-    <div className="heatmap-overview"><span>最近 365 天</span><span>{activeDays === undefined ? (error ? "活动不可用" : "读取中…") : `${activeDays} 天有笔记活动`}</span></div>
+    <div className="heatmap-overview"><span>最近 365 天</span><span>{activeDays === undefined ? (error ? "统计不可用" : "读取中…") : `${activeDays} 天有创建或修改`}</span></div>
     <div className="heatmap-scroll" ref={scroller}>
       <div className="heatmap-grid" role="group" aria-label="按周排列的笔记热力图" style={{ "--heatmap-weeks": end.week + 1 } as CSSProperties}>
         {months.map((day, index) => (months[index + 1]?.week ?? end.week + 4) - day.week >= 3 && <span className="heatmap-month" key={day.date} style={{ gridColumn: day.week + 2, gridRow: 1 }}>{Number(day.date.slice(5, 7))}月</span>)}
@@ -71,10 +71,10 @@ export function NoteHeatmap({ revision }: { revision: number }) {
       </div>
     </div>
     <div className="heatmap-selection">
-      <span aria-live="polite"><time dateTime={selected}>{selected}</time>{selectedDay && <span className="heatmap-count">新增 {selectedDay.created} 篇 · 修改 {selectedDay.edited} 篇</span>}</span>
-      <span className="note-heatmap-scale" aria-label="当天有活动的笔记数量从少到多">少{levels.map((label, level) => <i key={label} data-heat={level} title={label} aria-hidden="true"/>)}多</span>
+      <span aria-live="polite"><time dateTime={selected}>{selected}</time>{selectedDay && <span className="heatmap-count">创建 {selectedDay.created} 篇 · 最近修改 {selectedDay.edited} 篇</span>}</span>
+      <span className="note-heatmap-scale" aria-label="当天创建或最后修改的笔记数量从少到多">少{levels.map((label, level) => <i key={label} data-heat={level} title={label} aria-hidden="true"/>)}多</span>
     </div>
-    {error && <p className="heatmap-message" role="status">无法读取笔记活动。{error}</p>}
-    {activeDays === 0 && <p className="heatmap-message">新建或保存笔记后，活动会显示在这里。</p>}
+    {error && <p className="heatmap-message" role="status">无法统计笔记文件日期。{error}</p>}
+    {activeDays === 0 && <p className="heatmap-message">最近一年没有符合范围的笔记。</p>}
   </div>;
 }
