@@ -1,9 +1,10 @@
 // Cursor-aware block rendering follows Noteriv's math and Mermaid widgets.
-import { StateField, RangeSetBuilder } from "@codemirror/state";
+import { StateField, RangeSetBuilder, type EditorState } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
 import katex from "katex";
-import { richRanges, type RichRange } from "../../lib/rich-markdown";
+import type { RichRange } from "../../lib/rich-markdown";
 import { renderMermaid } from "../../lib/mermaid";
+import { analysisReady, editorIndex } from "./indexed-document";
 
 class RichWidget extends WidgetType {
   constructor(readonly range: RichRange) { super(); }
@@ -35,21 +36,43 @@ class RichWidget extends WidgetType {
   ignoreEvent() { return false; }
 }
 
-function decorations(view: { state: import("@codemirror/state").EditorState }): DecorationSet {
-  const { state } = view;
+function decorations(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  for (const range of richRanges(state.doc)) {
-    const firstLine = state.doc.lineAt(range.from), lastLine = state.doc.lineAt(range.to);
-    const active = state.selection.ranges.some((selection) => selection.from <= lastLine.to && selection.to >= firstLine.from);
+  for (const range of editorIndex(state.doc)?.rich ?? []) {
     // Block replacements cannot start inside a list marker or other text.
-    const nestedBlock = range.kind !== "inlineMath" && state.doc.sliceString(firstLine.from, range.from).trim().length > 0;
-    if (!active && !nestedBlock) builder.add(range.from, range.to, Decoration.replace({ widget: new RichWidget(range), block: range.kind !== "inlineMath" }));
+    const nestedBlock = range.kind !== "inlineMath" && state.doc.sliceString(state.doc.lineAt(range.from).from, range.from).trim().length > 0;
+    if (!nestedBlock) builder.add(range.from, range.to, Decoration.replace({ widget: new RichWidget(range), block: range.kind !== "inlineMath" }));
   }
   return builder.finish();
 }
 
-export const richMarkdownField = StateField.define<DecorationSet>({
-  create: (state) => decorations({ state }),
-  update: (value, transaction) => transaction.docChanged || transaction.selection ? decorations({ state: transaction.state }) : value,
-  provide: (field) => EditorView.decorations.from(field),
+function selectedLines(state: EditorState) {
+  return state.selection.ranges.map(range => ({ from: state.doc.lineAt(range.from).from, to: state.doc.lineAt(range.to).to }));
+}
+
+function hideInSelectedLines(base: DecorationSet, lines: ReturnType<typeof selectedLines>) {
+  // RangeSet skips unaffected chunks. Keep one set of widgets per document,
+  // including block widgets whose heights CodeMirror tracks outside the viewport.
+  let visible = base;
+  for (const { from, to } of lines) {
+    visible = visible.update({ filterFrom: from, filterTo: to, filter: (start, end) => end < from || start > to });
+  }
+  return visible;
+}
+
+export const richMarkdownField = StateField.define<{ base: DecorationSet; visible: DecorationSet; lines: ReturnType<typeof selectedLines> }>({
+  create(state) {
+    const base = decorations(state), lines = selectedLines(state);
+    return { base, lines, visible: hideInSelectedLines(base, lines) };
+  },
+  update(value, transaction) {
+    const changed = transaction.docChanged || transaction.effects.some(effect => effect.is(analysisReady));
+    if (!changed && !transaction.selection) return value;
+    const lines = selectedLines(transaction.state);
+    if (!changed && lines.length === value.lines.length &&
+        lines.every((line, i) => line.from === value.lines[i].from && line.to === value.lines[i].to)) return value;
+    const base = changed ? decorations(transaction.state) : value.base;
+    return { base, lines, visible: hideInSelectedLines(base, lines) };
+  },
+  provide: (field) => EditorView.decorations.from(field, value => value.visible),
 });

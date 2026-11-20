@@ -5,7 +5,7 @@ import remarkMath from "remark-math";
 import remarkRehype from "remark-rehype";
 import type {Root as MarkdownRoot} from "mdast";
 import type {Root,RootContent} from "hast";
-import {remarkWikiLinks} from "./wiki-syntax";
+import {remarkWikiLinks,type WikiLink} from "./wiki-syntax";
 import {remarkDisplayMath} from "./rich-markdown";
 import {headingBase,rehypeHeadingIds,textOf} from "./heading-ids";
 
@@ -13,8 +13,8 @@ export type HeadingEntry={id:string;text:string;level:number;from:number;line:nu
 // Same lightweight semantics/order as preview and export, before math/diagram rendering.
 const processor=unified().use(remarkParse).use(remarkGfm).use(remarkMath)
  .use(remarkDisplayMath).use(remarkWikiLinks).use(remarkRehype).use(rehypeHeadingIds);
-export function headingIndex(source:string,tree?:MarkdownRoot):HeadingEntry[]{
- const html=processor.runSync(tree??processor.parse(source),{value:source}) as Root;
+export function headingIndex(source:string,tree?:MarkdownRoot,wikiLinks?:WikiLink[]):HeadingEntry[]{
+ const html=processor.runSync(tree??processor.parse(source),{value:source,data:{notoWikiLinks:wikiLinks}}) as Root;
  const result:HeadingEntry[]=[],stack:number[]=[];
  function visit(node:RootContent){
   if(node.type!=="element")return;

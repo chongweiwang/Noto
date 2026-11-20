@@ -1,4 +1,3 @@
-import type { Text } from "@codemirror/state";
 import type { Root } from "mdast";
 import type { VFile } from "vfile";
 import { unified } from "unified";
@@ -31,8 +30,8 @@ export function remarkDisplayMath() {
 }
 
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkMath);
-export function parseRichMarkdown(source: string): RichRange[] {
-  const tree = parser.parse(source) as unknown as Node;
+export function parseRichMarkdown(source: string, parsed?: Root): RichRange[] {
+  const tree = (parsed ?? parser.parse(source)) as unknown as Node;
   normalizeDisplayMath(tree, source);
   const ranges: RichRange[] = [];
   function visit(node: Node) {
@@ -44,11 +43,4 @@ export function parseRichMarkdown(source: string): RichRange[] {
   }
   visit(tree);
   return ranges;
-}
-
-const cache = new WeakMap<Text, RichRange[]>();
-export function richRanges(doc: Text): RichRange[] {
-  let result = cache.get(doc);
-  if (!result) { result = parseRichMarkdown(doc.toString()); cache.set(doc, result); }
-  return result;
 }

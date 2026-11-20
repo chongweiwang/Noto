@@ -6,10 +6,27 @@ import { EditorView } from "@codemirror/view";
 import { undo } from "@codemirror/commands";
 import { acceptCompletion, startCompletion } from "@codemirror/autocomplete";
 import { MarkdownEditor,type EditorHandle } from "./markdown-editor";
+import { manualCopyEvent } from "../lib/ui-actions";
 import {createRef} from "react";
 
 vi.mock("../lib/mermaid", () => ({ renderMermaid: async () => '<svg xmlns="http://www.w3.org/2000/svg"><text>图表</text></svg>' }));
 afterEach(cleanup);
+
+it("右键复制选中的原文并保留选区", () => {
+  const { container, view, onChange } = mount("第一段\n\n第二段");
+  const copy = vi.fn();
+  window.addEventListener(manualCopyEvent, copy);
+  try {
+    act(() => view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } }));
+    fireEvent.contextMenu(container.querySelector(".cm-content")!, { clientX: 12, clientY: 12 });
+    fireEvent.click(screen.getByRole("menuitem", { name: /^复制$/ }));
+    expect(copy.mock.calls[0][0].detail).toBe("第一段\n\n第二段");
+    expect(view.state.selection.main.to).toBe(view.state.doc.length);
+    expect(onChange).not.toHaveBeenCalled();
+  } finally {
+    window.removeEventListener(manualCopyEvent, copy);
+  }
+});
 
 it("切换到另一栏后，迟到的自动聚焦不会抢回旧笔记", async () => {
   vi.useFakeTimers({ toFake: ["requestAnimationFrame", "cancelAnimationFrame"] });

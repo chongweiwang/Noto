@@ -2,7 +2,7 @@ import {unified} from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
-import type {Text} from "@codemirror/state";
+import type { Root } from "mdast";
 
 export type BlockKind="paragraph"|"listItem"|"list"|"blockquote"|"table";
 export type BlockMarker={id:string;from:number;to:number;standalone:boolean};
@@ -15,8 +15,8 @@ export const validBlockId=(id:string)=>/^[A-Za-z0-9-]{1,128}$/.test(id);
 
 // AST positions establish ownership; text-only ranges prevent markers inside
 // links, images, code, math, HTML and escaped syntax from acquiring identity.
-export function blockIndex(source:string):BlockIndex {
- const root=parser.parse(source) as unknown as Node,plain:{from:number;to:number}[]=[];
+export function blockIndex(source:string,parsed?:Root):BlockIndex {
+ const root=(parsed??parser.parse(source)) as unknown as Node,plain:{from:number;to:number}[]=[];
  function collect(node:Node){
   if(["link","linkReference","image","imageReference","code","inlineCode","math","inlineMath","html","definition"].includes(node.type))return;
   if(node.type==="text"){const from=node.position?.start.offset,to=node.position?.end.offset;if(from!==undefined&&to!==undefined)plain.push({from,to});return;}
@@ -39,7 +39,11 @@ export function blockIndex(source:string):BlockIndex {
   if(!item){item={kind:node.type as BlockKind,from,to,line:node.position?.start.line??1,markers:[],snippet:source.slice(from,to).trim().replace(/\s+/g," ").slice(0,160)};entries.set(key,item);}
   return item;
  }
- function isPlain(from:number,to:number){return plain.some(range=>range.from<=from&&range.to>=to);}
+ function isPlain(from:number,to:number){
+  let low=0,high=plain.length;
+  while(low<high){const middle=(low+high)>>>1;if(plain[middle].from<=from)low=middle+1;else high=middle;}
+  return low>0&&plain[low-1].to>=to;
+ }
  function walk(node:Node,parent?:Node){
   if(node.type==="paragraph"&&(parent?.type==="root"||parent?.type==="listItem")){
    if(parent.type==="listItem"&&parent.children?.filter(child=>child.type==="paragraph").at(-1)!==node){node.children?.forEach(child=>walk(child,node));return;}
@@ -104,5 +108,3 @@ export function findBlock(index:BlockIndex,id:string):{status:"resolved"|"missin
  if(hits.length!==1||hits[0].markers.length!==1)return {status:"ambiguous"};
  return {status:"resolved",block:hits[0]};
 }
-const documentBlocks=new WeakMap<Text,BlockIndex>();
-export function blocksForDoc(doc:Text){let index=documentBlocks.get(doc);if(!index){index=blockIndex(doc.toString());documentBlocks.set(doc,index);}return index;}

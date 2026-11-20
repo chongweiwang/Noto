@@ -196,15 +196,17 @@ export const MarkdownPreview = memo(function MarkdownPreview({ note, content, on
   nested?:boolean;hideHtml?:boolean;embedScope?:string;embedRevision?:number;embedActive?:boolean;
   onCopyBlock?:(kind:BlockKind,from:number,content:string)=>void;
 }) {
-  const [blockMenu,setBlockMenu]=useState<{x:number;y:number;kind:BlockKind;from:number}|null>(null);
+  const [blockMenu,setBlockMenu]=useState<{x:number;y:number;action:{text:string}|{kind:BlockKind;from:number}}|null>(null);
   useEffect(()=>{if(!blockMenu)return;const close=()=>setBlockMenu(null);window.addEventListener("pointerdown",close);return ()=>window.removeEventListener("pointerdown",close);},[blockMenu]);
   const {api}=useWorkspaceRuntime(),identity=useId(),idPrefix=nested?"noto-embed-"+identity.replace(/[^a-zA-Z0-9]/g,"")+"-":"";
   const [retryRevision,setRetryRevision]=useState(0);
-  const pathsKey=wikiPaths.join("\0"),drawingPathsKey=drawingPaths.join("\0"),embedKey=JSON.stringify([note,content,pathsKey,drawingPathsKey,embedScope,embedRevision,retryRevision]);
+  const pathsKey=wikiPaths.join("\0"),drawingPathsKey=drawingPaths.join("\0");
+  const embedKey=useMemo(()=>JSON.stringify([note,content,pathsKey,drawingPathsKey,embedScope,embedRevision,retryRevision]),
+    [note,content,pathsKey,drawingPathsKey,embedScope,embedRevision,retryRevision]);
   const [embedBatch,setEmbedBatch]=useState<{key:string;items:EmbedResult[]}|null>(null);
   const embeds=embedBatch?.key===embedKey?embedBatch.items:null;
   useEffect(()=>{
-    if(nested||!embedActive||!parseNoteEmbeds(content).length){setEmbedBatch(null);return;}
+    if(nested||!embedActive||!content.includes("![[")||!parseNoteEmbeds(content).length){setEmbedBatch(null);return;}
     let cancelled=false,running=false;
     const update=async()=>{if(running||cancelled)return;running=true;try{
       const result=await loadNoteEmbeds(content,note,pathsKey?pathsKey.split("\0"):[],path=>readEmbedSaved(api,embedScope,path,()=>cancelled),()=>cancelled,drawingPathsKey?drawingPathsKey.split("\0"):[]);
@@ -247,10 +249,30 @@ export const MarkdownPreview = memo(function MarkdownPreview({ note, content, on
     });
     return () => cancelAnimationFrame(frame);
   }, [note, content, anchor, onAnchorHandled]);
-  return <article ref={article} className="markdown-preview" aria-label="Markdown 预览" onMouseUp={()=>{if(search)onSearchClear?.(search.serial);}} onScroll={(event) => onScrollChange?.(event.currentTarget.scrollTop)} onContextMenu={event=>{if(nested){event.stopPropagation();return;}if(!onCopyBlock)return;const target=(event.target as HTMLElement).closest<HTMLElement>("[data-block-from]");if(!target||!article.current?.contains(target))return;event.preventDefault();setBlockMenu({x:event.clientX,y:event.clientY,from:Number(target.dataset.blockFrom),kind:target.dataset.blockKind as BlockKind});}}>
+  const rendered = useMemo(() => (
+    <ReactMarkdown skipHtml={hideHtml} remarkPlugins={[remarkGfm, remarkMath, remarkDisplayMath, remarkWikiLinks,remarkNoteEmbeds,remarkCallouts]} urlTransform={(url) => url.startsWith("noto-wiki:")||url.startsWith("noto-embed:") ? url : defaultUrlTransform(url)} rehypePlugins={[rehypeHeadingIds,[scopedIds,idPrefix],[rehypeBlockLocations,{navigation:!nested}], rehypeCheckboxLocations, rehypeMathErrors, [rehypeSearchBlock,search], [rehypeKatex, { trust: false }], [rehypeHighlight, { ignoreMissing: true }], [rehypeSearchMark,search]]} components={{ pre: MarkdownPre, input: MarkdownCheckbox, img: MarkdownImage, a: MarkdownAnchor,p:MarkdownParagraph }}>{content}</ReactMarkdown>
+  ), [content,hideHtml,idPrefix,nested,search]);
+  return <article ref={article} className="markdown-preview" aria-label="Markdown 预览" onMouseUp={()=>{if(search)onSearchClear?.(search.serial);}} onScroll={(event) => onScrollChange?.(event.currentTarget.scrollTop)} onContextMenu={event=>{
+    if(nested){event.stopPropagation();return;}
+    const selection = window.getSelection();
+    const text = selection && !selection.isCollapsed &&
+      article.current?.contains(selection.anchorNode) && article.current.contains(selection.focusNode) ? selection.toString() : "";
+    const target = onCopyBlock && (event.target as HTMLElement).closest<HTMLElement>("[data-block-from]");
+    const action = text ? {text} : target && article.current?.contains(target) ?
+      {from:Number(target.dataset.blockFrom),kind:target.dataset.blockKind as BlockKind} : null;
+    if (!action) return;
+    event.preventDefault();
+    setBlockMenu({x:event.clientX,y:event.clientY,action});
+  }}>
     <PreviewContext.Provider value={{ content, onChange: onCheckboxChange, disabled: checkboxesDisabled, onError, note, wikiPaths,drawingPaths, onWikiOpen, wikiServices, onOpenNote, anchorsInSource, scrollToAnchor,embeds,nested,embedScope,embedRevision,idPrefix,retryEmbeds:()=>setRetryRevision(value=>value+1) }}>
-      <ReactMarkdown skipHtml={hideHtml} remarkPlugins={[remarkGfm, remarkMath, remarkDisplayMath, remarkWikiLinks,remarkNoteEmbeds,remarkCallouts]} urlTransform={(url) => url.startsWith("noto-wiki:")||url.startsWith("noto-embed:") ? url : defaultUrlTransform(url)} rehypePlugins={[rehypeHeadingIds,[scopedIds,idPrefix],[rehypeBlockLocations,{navigation:!nested}], rehypeCheckboxLocations, rehypeMathErrors, [rehypeSearchBlock,search], [rehypeKatex, { trust: false }], [rehypeHighlight, { ignoreMissing: true }], [rehypeSearchMark,search]]} components={{ pre: MarkdownPre, input: MarkdownCheckbox, img: MarkdownImage, a: MarkdownAnchor,p:MarkdownParagraph }}>{content}</ReactMarkdown>
+      {rendered}
     </PreviewContext.Provider>
-    {blockMenu&&<div role="menu" className="block-context-menu" style={{position:"fixed",left:blockMenu.x,top:blockMenu.y,zIndex:1000}} onPointerDown={event=>event.stopPropagation()} onKeyDown={event=>{if(event.key==="Escape")setBlockMenu(null);}}><button type="button" role="menuitem" onClick={()=>{setBlockMenu(null);onCopyBlock?.(blockMenu.kind,blockMenu.from,content);}}>复制当前块 Wiki 链接</button></div>}
+    {blockMenu&&<div role="menu" className="block-context-menu" style={{position:"fixed",left:blockMenu.x,top:blockMenu.y,zIndex:1000}} onPointerDown={event=>event.stopPropagation()} onMouseDown={event=>event.preventDefault()} onKeyDown={event=>{if(event.key==="Escape")setBlockMenu(null);}}>
+      <button type="button" role="menuitem" onClick={()=>{
+        setBlockMenu(null);
+        if ("text" in blockMenu.action) void copyText(blockMenu.action.text);
+        else onCopyBlock?.(blockMenu.action.kind,blockMenu.action.from,content);
+      }}>{"text" in blockMenu.action ? "复制" : "复制当前块 Wiki 链接"}</button>
+    </div>}
   </article>;
 });

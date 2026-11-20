@@ -7,6 +7,8 @@ import {isDrawing} from "../lib/document-kind";
 import {WorkspaceRuntimeContext,type WorkspaceRuntime} from "../lib/workspace-runtime";
 import type {WikiOpen,WikiServices} from "../lib/wiki-ui";
 import {MarkdownPreview} from "./markdown-preview";
+import {firstIntersecting} from "../lib/editor-markdown-index";
+import {editorIndex,selectionTouches,shouldRender} from "./noteriv-markdown/indexed-document";
 
 type Config={runtime:WorkspaceRuntime;path:string;paths:string[];drawingPaths:string[];scope:string;revision:number;active:boolean;open:WikiOpen;openDocument:(path:string)=>void;services?:WikiServices;error:(value:string)=>void};
 const roots=new WeakMap<HTMLElement,Root>();
@@ -35,16 +37,18 @@ export function liveNoteEmbeds(config:Config){
   constructor(view:EditorView){this.decorations=this.build(view);}
   build(view:EditorView){
    const builder=new RangeSetBuilder<Decoration>(),doc=view.state.doc;
-   const ranges=view.state.selection.ranges;
-   let index=0;for(const embed of parseNoteEmbeds(doc.toString())){
-    const overLimit=index++>=100;
+   const embeds=editorIndex(doc)?.embeds;
+   if(!embeds)return Decoration.none;
+   for(let index=firstIntersecting(embeds,view.viewport.from);index<embeds.length;index++){
+    const embed=embeds[index];
+    if(embed.from>view.viewport.to)break;
     if(!embed.standalone||embed.from<view.viewport.from||embed.to>view.viewport.to)continue;
     const line=doc.lineAt(embed.from);
-    if(ranges.some(range=>range.from<=line.to&&range.to>=line.from))continue;
-    builder.add(embed.from,embed.to,Decoration.replace({widget:new EmbedWidget(embed.from,doc.sliceString(embed.from,embed.to),config,overLimit)}));
+    if(selectionTouches(view.state,line.from,line.to))continue;
+    builder.add(embed.from,embed.to,Decoration.replace({widget:new EmbedWidget(embed.from,doc.sliceString(embed.from,embed.to),config,index>=100)}));
    }
    return builder.finish();
   }
-  update(update:ViewUpdate){if(update.docChanged||update.selectionSet||update.viewportChanged)this.decorations=this.build(update.view);}
+  update(update:ViewUpdate){if(shouldRender(update))this.decorations=this.build(update.view);}
  },{decorations:plugin=>plugin.decorations});
 }

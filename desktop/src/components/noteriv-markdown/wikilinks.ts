@@ -9,6 +9,8 @@ import {wikiTargetForPath,resolveWikiTarget,formatWikiHeading,formatWikiBlock,en
 import {blockIndex,findBlock} from "../../lib/wiki-block";
 import {headingIndex} from "../../lib/heading-index";
 import {wikiPresentation,type WikiServices} from "../../lib/wiki-ui";
+import { visibleRanges } from "../../lib/editor-markdown-index";
+import { editorIndex, selectionTouches, shouldRender } from "./indexed-document";
 
 export type WikiConfig={paths:string[];notePath?:string;onOpen:(target:string)=>void;services?:WikiServices;active?:()=>boolean};
 const emptyConfig:WikiConfig={paths:[],onOpen:()=>{}};
@@ -27,10 +29,11 @@ class WikiWidget extends WidgetType{
 }
 function decorations(view:EditorView):DecorationSet{
  const builder=new RangeSetBuilder<Decoration>(),config=view.state.facet(wikiConfigFacet);
- for(const link of knowledgeForDoc(view.state.doc).wiki){
+ const index=editorIndex(view.state.doc);
+ if(!index)return Decoration.none;
+ for(const link of visibleRanges(index.wiki,view.viewport.from,view.viewport.to)){
   const line=view.state.doc.lineAt(link.from);
-  if(view.state.selection.ranges.some(selection=>selection.from<=line.to&&selection.to>=line.from))continue;
-  if(link.to<view.viewport.from||link.from>view.viewport.to)continue;
+  if(selectionTouches(view.state,line.from,line.to))continue;
   builder.add(link.from,link.to,Decoration.replace({widget:new WikiWidget(link,config)}));
  }
  return builder.finish();
@@ -38,10 +41,12 @@ function decorations(view:EditorView):DecorationSet{
 export const wikiLinkPlugin=ViewPlugin.fromClass(class{
  decorations:DecorationSet;
  constructor(view:EditorView){this.decorations=decorations(view);}
- update(update:ViewUpdate){if(update.docChanged||update.selectionSet||update.viewportChanged||update.startState.facet(wikiConfigFacet)!==update.state.facet(wikiConfigFacet))this.decorations=decorations(update.view);}
+ update(update:ViewUpdate){if(shouldRender(update)||update.startState.facet(wikiConfigFacet)!==update.state.facet(wikiConfigFacet))this.decorations=decorations(update.view);}
 },{decorations:plugin=>plugin.decorations});
 export function openWikiAtCursor(view:EditorView){
- const position=view.state.selection.main.head,link=knowledgeForDoc(view.state.doc).wiki.find(item=>position>=item.from&&position<=item.to);
+ const position=view.state.selection.main.head;
+ const links=editorIndex(view.state.doc)?.wiki??knowledgeForDoc(view.state.doc).wiki;
+ const link=visibleRanges(links,position,position)[0];
  if(!link)return false;view.state.facet(wikiConfigFacet).onOpen(link.target);return true;
 }
 function applyLink(view:EditorView,context:CompletionContext,start:number,formatted:string){

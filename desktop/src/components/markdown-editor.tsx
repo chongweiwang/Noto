@@ -26,21 +26,25 @@ import {liveNoteEmbeds} from "./live-note-embeds";
 import {planBlockMarker} from "../lib/wiki-block";
 import {formatWikiBlock} from "../lib/wiki-target";
 import {blockMarkers} from "./block-markers";
+import { copyText } from "../lib/ui-actions";
+import type { EditorPosition } from "../lib/editor-position";
+import type { EditorAnalysisMessage, DocumentInfo } from "../lib/editor-markdown-index";
+import { analysisReady, documentInfos, setEditorIndex } from "./noteriv-markdown/indexed-document";
 
-export type EditorPosition = { from: number; line: number; column: number };
 export interface EditorHandle { focus: () => void; insert: (text: string) => void; restoreSnapshot?: (content:string,expected:string)=>boolean; reveal: (from: number, expected?:string) => boolean; revealMatch:(highlight:SearchHighlight)=>boolean; capture: () => EditorViewState | undefined; measure: () => void; flushImports: () => Promise<void>; hasPendingImports: () => boolean;blockLink?:(expected:string,paths:string[])=>{link:string;created:boolean} }
 
 // The CodeMirror setup and live rendering are adapted from Noteriv's Editor and SourceEditor.
 export const MarkdownEditor = forwardRef<EditorHandle, {
-  value: string; notePath: string; disabled: boolean; live: boolean; active?: boolean; focused?: boolean; isFocusCurrent?: () => boolean;
+  value: string; notePath: string; disabled: boolean; live: boolean; large?: boolean; active?: boolean; focused?: boolean; isFocusCurrent?: () => boolean;
   onChange: (value: string) => void; onSave: () => void; onSaveAs: () => void; onImport: () => void;
   wikiPaths?: string[]; drawingPaths?:string[]; onOpenNote?:(path:string)=>void; onWikiOpen?: WikiOpen; wikiServices?:WikiServices; onReady?:()=>void; searchHighlight?:SearchHighlight; onSearchClear?:(serial:number)=>void;embedScope?:string;embedRevision?:number;onCopyBlock?:()=>void;
   onPositionChange?: (position: EditorPosition) => void;
+  onDocumentInfo?: (source: string, info: DocumentInfo) => void;
   initialState?: EditorViewState; onViewStateChange?: (state: EditorViewState) => void;
   onError?: (error: string) => void; onImported?: (path: string) => void; onImportStateChange?: (pending: boolean) => void;
-}>(function MarkdownEditor({ value, notePath, disabled, live, active = true, focused = active, isFocusCurrent, onChange, onSave, onSaveAs, onImport, wikiPaths = [],drawingPaths=[],onOpenNote, onWikiOpen, wikiServices, onReady, searchHighlight, onSearchClear, onPositionChange, initialState, onViewStateChange, onError, onImported, onImportStateChange,embedScope="",embedRevision=0,onCopyBlock }, ref) {
+}>(function MarkdownEditor({ value, notePath, disabled, live, large = false, active = true, focused = active, isFocusCurrent, onChange, onSave, onSaveAs, onImport, wikiPaths = [],drawingPaths=[],onOpenNote, onWikiOpen, wikiServices, onReady, searchHighlight, onSearchClear, onPositionChange, onDocumentInfo, initialState, onViewStateChange, onError, onImported, onImportStateChange,embedScope="",embedRevision=0,onCopyBlock }, ref) {
   const runtime = useWorkspaceRuntime(),{ api }=runtime;
-  const [blockMenu,setBlockMenu]=useState<{x:number;y:number}|null>(null);
+  const [blockMenu,setBlockMenu]=useState<{x:number;y:number;copySelection:boolean}|null>(null);
   useEffect(()=>{if(!blockMenu)return;const close=()=>setBlockMenu(null);window.addEventListener("pointerdown",close);return ()=>window.removeEventListener("pointerdown",close);},[blockMenu]);
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
@@ -50,8 +54,10 @@ export const MarkdownEditor = forwardRef<EditorHandle, {
   const onSaveAsRef = useRef(onSaveAs);
   const onImportRef = useRef(onImport);
   const onPositionRef = useRef(onPositionChange);
+  const onDocumentInfoRef = useRef(onDocumentInfo); onDocumentInfoRef.current = onDocumentInfo;
   const onViewStateRef = useRef(onViewStateChange), initial = useRef(initialState), restoreScroll = useRef(!!initialState);
   const activeRef = useRef(active); activeRef.current = active;
+  const largeRef = useRef(large); largeRef.current = large;
   const focusedRef = useRef(focused); focusedRef.current = focused;
   const focusCurrentRef = useRef(isFocusCurrent); focusCurrentRef.current = isFocusCurrent;
   const savedScroll = useRef({ scrollTop: initialState?.scrollTop ?? 0, scrollLeft: initialState?.scrollLeft ?? 0 });
@@ -106,7 +112,9 @@ export const MarkdownEditor = forwardRef<EditorHandle, {
   }
 
   function presentationExtensions(showLive: boolean) {
-    return showLive ? [editorTheme, markdownRenderTheme, richMarkdownField, liveMarkdownPlugin, wikiLinkPlugin,blockMarkers,liveNoteEmbeds({runtime,path:notePath,paths:wikiPaths,drawingPaths,scope:embedScope,revision:embedRevision,active,open:(target,source,chosen)=>onWikiOpenRef.current?.(target,source,chosen),openDocument:path=>openNoteRef.current?.(path),services:wikiServices,error:value=>importCallbacks.current.onError?.(value)})] : [
+    const normal = large ? [] : [codeCopyPlugin, EditorView.lineWrapping, wikiCompletion];
+    return showLive ? [...normal, editorTheme, markdownRenderTheme, richMarkdownField, liveMarkdownPlugin, wikiLinkPlugin,blockMarkers,liveNoteEmbeds({runtime,path:notePath,paths:wikiPaths,drawingPaths,scope:embedScope,revision:embedRevision,active,open:(target,source,chosen)=>onWikiOpenRef.current?.(target,source,chosen),openDocument:path=>openNoteRef.current?.(path),services:wikiServices,error:value=>importCallbacks.current.onError?.(value)})] : [
+      ...normal,
       lineNumbers(), highlightActiveLine(),
       EditorView.theme({
         "&": { height: "100%", background: "var(--bg-primary)", color: "var(--text-primary)", fontSize: "var(--editor-font-size, 15px)" },
@@ -120,13 +128,23 @@ export const MarkdownEditor = forwardRef<EditorHandle, {
 
   useEffect(() => {
     if (!host.current) return;
+    let positionFrame = 0;
+    function reportPosition(editor: EditorView) {
+      const from = editor.state.selection.main.head, line = editor.state.doc.lineAt(from);
+      const prefix = editor.state.sliceDoc(line.from, from);
+      let column = prefix.length + 1;
+      if (/[\uD800-\uDBFF]/.test(prefix)) {
+        for (const _pair of prefix.matchAll(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g)) column--;
+      }
+      onPositionRef.current?.({ from, line: line.number, column });
+    }
     const editor = new EditorView({
       parent: host.current,
       state: EditorState.create({
         doc: value,
         selection: initial.current ? { anchor: Math.min(value.length, initial.current.anchor), head: Math.min(value.length, initial.current.head) } : undefined,
         extensions: [
-          drawSelection(), closeBrackets(), editorSearchMark, historyConfig.current.of(history()), notePathFacet.of(notePath), assetApiFacet.of(api), codeCopyPlugin,
+          drawSelection(), closeBrackets(), editorSearchMark, historyConfig.current.of(history()), notePathFacet.of(notePath), assetApiFacet.of(api),
           EditorView.domEventHandlers({
             compositionstart(_event,editor){if(editor.state.field(editorSearchMark))editor.dispatch({effects:searchMarkEffect.of(null)});return false;},
             paste(event, editor) {
@@ -141,9 +159,9 @@ export const MarkdownEditor = forwardRef<EditorHandle, {
               event.preventDefault(); importFiles(files, editor.posAtCoords({ x: event.clientX, y: event.clientY }) ?? editor.state.selection.main.from); return true;
             },
           }),
-          wikiConfig.current.of(wikiConfigFacet.of({ paths: wikiPaths, notePath, services:wikiServices, active:()=>activeRef.current, onOpen: handleWiki.current })), wikiCompletion,
+          wikiConfig.current.of(wikiConfigFacet.of({ paths: wikiPaths, notePath, services:wikiServices, active:()=>activeRef.current, onOpen: handleWiki.current })),
           markdown({ base: markdownLanguage, codeLanguages: languages }),
-          syntaxHighlighting(mdHighlightStyle), search({ top: true }), EditorView.lineWrapping,
+          syntaxHighlighting(mdHighlightStyle), search({ top: true }),
           presentation.current.of(presentationExtensions(live)),
           editable.current.of([EditorView.editable.of(!disabled), EditorState.readOnly.of(disabled)]),
           keymap.of([{ key: "Mod-Shift-s", run: () => { onSaveAsRef.current(); return true; } }, { key: "Mod-s", run: () => { onSaveRef.current(); return true; } },
@@ -157,12 +175,14 @@ export const MarkdownEditor = forwardRef<EditorHandle, {
             if(before&&!after)searchClearRef.current?.(before.serial);
             if (update.docChanged) for (const [token, position] of importPositions.current) importPositions.current.set(token, update.changes.mapPos(position, -1));
             if (update.docChanged&&!synchronizing.current) onChangeRef.current(update.state.doc.toString());
-            if (update.docChanged || update.selectionSet) {
-              const from = update.state.selection.main.head, line = update.state.doc.lineAt(from);
-              onPositionRef.current?.({ from, line: line.number, column: Array.from(update.state.sliceDoc(line.from, from)).length + 1 });
-              rememberView();
+            if ((update.docChanged || update.selectionSet) && !positionFrame) {
+              positionFrame = requestAnimationFrame(() => {
+                positionFrame = 0;
+                reportPosition(update.view);
+                rememberView();
+              });
             }
-            if (update.docChanged && !update.view.compositionStarted && update.transactions.some((transaction) => transaction.isUserEvent("input.type"))) {
+            if (!largeRef.current && update.docChanged && !update.view.compositionStarted && update.transactions.some((transaction) => transaction.isUserEvent("input.type"))) {
               const pos = update.state.selection.main.from;
               if (update.state.sliceDoc(Math.max(0, pos - 2), pos) === "[[") queueMicrotask(() => { if (view.current === update.view) startCompletion(update.view); });
             }
@@ -174,9 +194,8 @@ export const MarkdownEditor = forwardRef<EditorHandle, {
     readyRef.current?.();
     editor.scrollDOM.addEventListener("scroll", rememberView);
     const composed=()=>queueMicrotask(()=>readyRef.current?.());editor.contentDOM.addEventListener("compositionend",composed);
-    const head = editor.state.selection.main.head, line = editor.state.doc.lineAt(head);
-    onPositionRef.current?.({ from: head, line: line.number, column: Array.from(line.text.slice(0, head - line.from)).length + 1 });
-    return () => { rememberView(); editor.scrollDOM.removeEventListener("scroll", rememberView); editor.contentDOM.removeEventListener("compositionend",composed); editor.destroy(); view.current = null; };
+    reportPosition(editor);
+    return () => { cancelAnimationFrame(positionFrame); rememberView(); editor.scrollDOM.removeEventListener("scroll", rememberView); editor.contentDOM.removeEventListener("compositionend",composed); editor.destroy(); view.current = null; };
     // The view is mounted once; changes are synchronized below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -192,7 +211,40 @@ export const MarkdownEditor = forwardRef<EditorHandle, {
     }
   }, [value]);
   useEffect(() => { view.current?.dispatch({ effects: editable.current.reconfigure([EditorView.editable.of(!disabled), EditorState.readOnly.of(disabled)]) }); }, [disabled]);
-  useEffect(() => { view.current?.dispatch({ effects: presentation.current.reconfigure(presentationExtensions(live)) }); }, [live,active,notePath,wikiPaths.join("\0"),drawingPaths.join("\0"),embedScope,embedRevision,runtime,wikiServices]);
+  useEffect(() => { view.current?.dispatch({ effects: presentation.current.reconfigure(presentationExtensions(live)) }); }, [live,large,active,notePath,wikiPaths.join("\0"),drawingPaths.join("\0"),embedScope,embedRevision,runtime,wikiServices]);
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor || !large || !active) return;
+    const doc = editor.state.doc;
+    const cached = documentInfos.get(doc);
+    if (cached) {
+      if (focused) onDocumentInfoRef.current?.(value, cached);
+      return;
+    }
+    let worker: Worker | undefined;
+    const failed = () => importCallbacks.current.onError?.("这篇笔记的后台分析未完成，原文仍可编辑。");
+    const timer = setTimeout(() => {
+      try {
+        worker = new Worker(new URL("../lib/editor-markdown.worker.ts", import.meta.url), { type: "module" });
+        worker.onmessage = ({ data }: MessageEvent<EditorAnalysisMessage>) => {
+          if (view.current !== editor || editor.state.doc !== doc) return;
+          if (data.type === "index") {
+            setEditorIndex(doc, data.index);
+            editor.dispatch({ effects: analysisReady.of(null) });
+          } else {
+            worker?.terminate();
+            if (data.type === "info") {
+              documentInfos.set(doc, data.info);
+              if (focused) onDocumentInfoRef.current?.(value, data.info);
+            } else failed();
+          }
+        };
+        worker.onerror = () => { worker?.terminate(); failed(); };
+        worker.postMessage(doc.toString());
+      } catch { failed(); }
+    }, 220);
+    return () => { clearTimeout(timer); worker?.terminate(); };
+  }, [active, focused, large, value]);
   useEffect(() => {
     if (!active || !focused) return;
     const frame = requestAnimationFrame(() => {
@@ -307,7 +359,28 @@ export const MarkdownEditor = forwardRef<EditorHandle, {
   } }), []);
   return <div className="editor-shell">
     <FormattingToolbar onAction={format} disabled={disabled} />
-    <div className="codemirror-host" ref={host} aria-label="Markdown 编辑器" onContextMenu={event=>{if(!onCopyBlock)return;event.preventDefault();const editor=view.current,at=editor?.posAtCoords({x:event.clientX,y:event.clientY});if(editor&&at!==null&&at!==undefined&&(at<editor.state.selection.main.from||at>editor.state.selection.main.to))editor.dispatch({selection:{anchor:at}});setBlockMenu({x:event.clientX,y:event.clientY});}} />
-    {blockMenu&&<div role="menu" className="block-context-menu" style={{position:"fixed",left:blockMenu.x,top:blockMenu.y,zIndex:1000}} onPointerDown={event=>event.stopPropagation()} onKeyDown={event=>{if(event.key==="Escape")setBlockMenu(null);}}><button type="button" role="menuitem" title="首次复制会在当前笔记中插入块标记" onMouseDown={event=>event.preventDefault()} onClick={()=>{setBlockMenu(null);onCopyBlock?.();}}>复制当前块 Wiki 链接</button></div>}
+    <div className="codemirror-host" ref={host} aria-label="Markdown 编辑器" onContextMenu={event=>{
+      const editor = view.current;
+      if (!editor) return;
+      const copySelection = !editor.state.selection.main.empty;
+      if (!copySelection && !onCopyBlock) return;
+      event.preventDefault();
+      if (!copySelection) {
+        const at = editor.posAtCoords({x:event.clientX,y:event.clientY});
+        if (at !== null) editor.dispatch({selection:{anchor:at}});
+      }
+      setBlockMenu({x:event.clientX,y:event.clientY,copySelection});
+    }} />
+    {blockMenu&&<div role="menu" className="block-context-menu" style={{position:"fixed",left:blockMenu.x,top:blockMenu.y,zIndex:1000}} onPointerDown={event=>event.stopPropagation()} onMouseDown={event=>event.preventDefault()} onKeyDown={event=>{if(event.key==="Escape")setBlockMenu(null);}}>
+      {blockMenu.copySelection&&<button type="button" role="menuitem" onClick={()=>{
+        const editor = view.current;
+        setBlockMenu(null);
+        if (editor) {
+          const { from, to } = editor.state.selection.main;
+          if (from !== to) void copyText(editor.state.sliceDoc(from, to));
+        }
+      }}>复制</button>}
+      {onCopyBlock&&!blockMenu.copySelection&&<button type="button" role="menuitem" title="首次复制会在当前笔记中插入块标记" onClick={()=>{setBlockMenu(null);onCopyBlock();}}>复制当前块 Wiki 链接</button>}
+    </div>}
   </div>;
 });

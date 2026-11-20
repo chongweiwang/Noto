@@ -32,8 +32,8 @@ function wikiInText(source: string, start: number, end: number): WikiLink[] {
   return results;
 }
 
-export function parseKnowledge(source: string): Parsed {
-  const tree = parser.parse(source) as unknown as Node;
+export function parseKnowledge(source: string, root?: Root): Parsed {
+  const tree = (root ?? parser.parse(source)) as unknown as Node;
   const parsed: Parsed = { wiki: [], markdown: [], textRanges: [] };
   const definitions = new Map<string, string>();
   function collectDefinitions(node: Node) {
@@ -87,7 +87,9 @@ export function wikiCompletionAllowed(source: string, from: number, to: number):
 export function remarkWikiLinks() {
   return (root: Root, file: VFile) => {
     const source = String(file.value);
-    const parsedLinks = parseKnowledge(source).wiki;
+    if (!source.includes("[[")) return;
+    const parsedLinks = (file.data.notoWikiLinks as WikiLink[] | undefined) ?? parseKnowledge(source).wiki;
+    if (!parsedLinks.length) return;
     const starts=[0];
     for(let i=0;i<source.length;i++) if(source[i]==="\n")starts.push(i+1);
     function point(offset:number) {
@@ -100,7 +102,16 @@ export function remarkWikiLinks() {
       node.children = node.children.flatMap((child) => {
         const from = child.position?.start.offset, to = child.position?.end.offset;
         if (child.type !== "text" || from === undefined || to === undefined) { visit(child); return [child]; }
-        const links = parsedLinks.filter((link) => link.from >= from && link.to <= to);
+        let low = 0, high = parsedLinks.length;
+        while (low < high) {
+          const middle = (low + high) >>> 1;
+          if (parsedLinks[middle].from < from) low = middle + 1;
+          else high = middle;
+        }
+        const links: WikiLink[] = [];
+        for (let i = low; i < parsedLinks.length && parsedLinks[i].from < to; i++) {
+          if (parsedLinks[i].to <= to) links.push(parsedLinks[i]);
+        }
         if (!links.length) return [child];
         const parts: Node[] = [];
         let cursor = from;
