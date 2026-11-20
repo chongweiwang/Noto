@@ -1,9 +1,9 @@
 "use client";
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import { EditorState, Compartment, Transaction } from "@codemirror/state";
+import { EditorState, Compartment, Transaction, type Text } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection } from "@codemirror/view";
-import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab, isolateHistory, selectAll } from "@codemirror/commands";
 import { closeBrackets, closeBracketsKeymap, startCompletion } from "@codemirror/autocomplete";
 import { markdown, markdownLanguage, markdownKeymap } from "@codemirror/lang-markdown";
 import { languages } from "@codemirror/language-data";
@@ -23,29 +23,35 @@ import { codeCopyPlugin } from "./code-copy";
 import {editorSearchMark,searchMarkEffect} from "./search-decoration";
 import {normalizeSearchText,rawSearchOffset,type SearchHighlight} from "../lib/note-search";
 import {liveNoteEmbeds} from "./live-note-embeds";
-import {planBlockMarker} from "../lib/wiki-block";
-import {formatWikiBlock} from "../lib/wiki-target";
-import {blockMarkers} from "./block-markers";
 import { copyText } from "../lib/ui-actions";
 import type { EditorPosition } from "../lib/editor-position";
 import type { EditorAnalysisMessage, DocumentInfo } from "../lib/editor-markdown-index";
 import { analysisReady, documentInfos, setEditorIndex } from "./noteriv-markdown/indexed-document";
 
-export interface EditorHandle { focus: () => void; insert: (text: string) => void; restoreSnapshot?: (content:string,expected:string)=>boolean; reveal: (from: number, expected?:string) => boolean; revealMatch:(highlight:SearchHighlight)=>boolean; capture: () => EditorViewState | undefined; measure: () => void; flushImports: () => Promise<void>; hasPendingImports: () => boolean;blockLink?:(expected:string,paths:string[])=>{link:string;created:boolean} }
+type EditorRange = { doc: Text; from: number; to: number };
+type EditorMenu = { range: EditorRange; x: number; y: number; keyboard: boolean };
+export interface EditorHandle { focus: () => void; insert: (text: string) => void; restoreSnapshot?: (content:string,expected:string)=>boolean; reveal: (from: number, expected?:string) => boolean; revealMatch:(highlight:SearchHighlight)=>boolean; capture: () => EditorViewState | undefined; measure: () => void; flushImports: () => Promise<void>; hasPendingImports: () => boolean }
 
 // The CodeMirror setup and live rendering are adapted from Noteriv's Editor and SourceEditor.
 export const MarkdownEditor = forwardRef<EditorHandle, {
   value: string; notePath: string; disabled: boolean; live: boolean; large?: boolean; active?: boolean; focused?: boolean; isFocusCurrent?: () => boolean;
   onChange: (value: string) => void; onSave: () => void; onSaveAs: () => void; onImport: () => void;
-  wikiPaths?: string[]; drawingPaths?:string[]; onOpenNote?:(path:string)=>void; onWikiOpen?: WikiOpen; wikiServices?:WikiServices; onReady?:()=>void; searchHighlight?:SearchHighlight; onSearchClear?:(serial:number)=>void;embedScope?:string;embedRevision?:number;onCopyBlock?:()=>void;
+  wikiPaths?: string[]; drawingPaths?:string[]; onOpenNote?:(path:string)=>void; onWikiOpen?: WikiOpen; wikiServices?:WikiServices; onReady?:()=>void; searchHighlight?:SearchHighlight; onSearchClear?:(serial:number)=>void;embedScope?:string;embedRevision?:number;
   onPositionChange?: (position: EditorPosition) => void;
   onDocumentInfo?: (source: string, info: DocumentInfo) => void;
   initialState?: EditorViewState; onViewStateChange?: (state: EditorViewState) => void;
   onError?: (error: string) => void; onImported?: (path: string) => void; onImportStateChange?: (pending: boolean) => void;
-}>(function MarkdownEditor({ value, notePath, disabled, live, large = false, active = true, focused = active, isFocusCurrent, onChange, onSave, onSaveAs, onImport, wikiPaths = [],drawingPaths=[],onOpenNote, onWikiOpen, wikiServices, onReady, searchHighlight, onSearchClear, onPositionChange, onDocumentInfo, initialState, onViewStateChange, onError, onImported, onImportStateChange,embedScope="",embedRevision=0,onCopyBlock }, ref) {
+}>(function MarkdownEditor({ value, notePath, disabled, live, large = false, active = true, focused = active, isFocusCurrent, onChange, onSave, onSaveAs, onImport, wikiPaths = [],drawingPaths=[],onOpenNote, onWikiOpen, wikiServices, onReady, searchHighlight, onSearchClear, onPositionChange, onDocumentInfo, initialState, onViewStateChange, onError, onImported, onImportStateChange,embedScope="",embedRevision=0 }, ref) {
   const runtime = useWorkspaceRuntime(),{ api }=runtime;
-  const [blockMenu,setBlockMenu]=useState<{x:number;y:number;copySelection:boolean}|null>(null);
-  useEffect(()=>{if(!blockMenu)return;const close=()=>setBlockMenu(null);window.addEventListener("pointerdown",close);return ()=>window.removeEventListener("pointerdown",close);},[blockMenu]);
+  const [menu, setMenu] = useState<EditorMenu | null>(null);
+  const menuElement = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (event: PointerEvent) => { if (!menuElement.current?.contains(event.target as Node)) setMenu(null); };
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [menu]);
+  useEffect(() => { if (!active) setMenu(null); }, [active]);
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<EditorView | null>(null);
   const synchronizing=useRef(false);
@@ -113,7 +119,7 @@ export const MarkdownEditor = forwardRef<EditorHandle, {
 
   function presentationExtensions(showLive: boolean) {
     const normal = large ? [] : [codeCopyPlugin, EditorView.lineWrapping, wikiCompletion];
-    return showLive ? [...normal, editorTheme, markdownRenderTheme, richMarkdownField, liveMarkdownPlugin, wikiLinkPlugin,blockMarkers,liveNoteEmbeds({runtime,path:notePath,paths:wikiPaths,drawingPaths,scope:embedScope,revision:embedRevision,active,open:(target,source,chosen)=>onWikiOpenRef.current?.(target,source,chosen),openDocument:path=>openNoteRef.current?.(path),services:wikiServices,error:value=>importCallbacks.current.onError?.(value)})] : [
+    return showLive ? [...normal, editorTheme, markdownRenderTheme, richMarkdownField, liveMarkdownPlugin, wikiLinkPlugin,liveNoteEmbeds({runtime,path:notePath,paths:wikiPaths,drawingPaths,scope:embedScope,revision:embedRevision,active,open:(target,source,chosen)=>onWikiOpenRef.current?.(target,source,chosen),openDocument:path=>openNoteRef.current?.(path),services:wikiServices,error:value=>importCallbacks.current.onError?.(value)})] : [
       ...normal,
       lineNumbers(), highlightActiveLine(),
       EditorView.theme({
@@ -334,14 +340,7 @@ export const MarkdownEditor = forwardRef<EditorHandle, {
     if(!editor||editor.compositionStarted||editor.state.doc.toString()!==expected)return false;
     editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:content},selection:{anchor:0},annotations:isolateHistory.of("full"),userEvent:"input.restore"});
     return true;
-  }, flushImports: async () => { await Promise.all([...imports.current]); }, hasPendingImports: () => imports.current.size > 0, measure: () => view.current?.requestMeasure(), blockLink:(expected,paths)=>{
-    const editor=view.current;if(!editor||editor.state.readOnly||editor.compositionStarted)throw new Error("当前笔记无法编辑，请先处理草稿或结束输入");
-    const source=editor.state.doc.toString();if(source!==normalizeSearchText(expected))throw new Error("笔记内容已变化，请重新选择块");
-    const selection=editor.state.selection.main,plan=planBlockMarker(source,selection.from,selection.to);
-    const link=formatWikiBlock(noteRef.current,plan.id,plan.snippet,paths);
-    if(plan.change)editor.dispatch({changes:plan.change,annotations:isolateHistory.of("full")});
-    return {link,created:!!plan.change};
-  }, reveal: (from,expected) => {
+  }, flushImports: async () => { await Promise.all([...imports.current]); }, hasPendingImports: () => imports.current.size > 0, measure: () => view.current?.requestMeasure(), reveal: (from,expected) => {
     const editor = view.current;
     if (!editor||editor.compositionStarted||expected!==undefined&&editor.state.doc.toString()!==normalizeSearchText(expected)) return false;
     navigationScroll.current=true;
@@ -357,30 +356,81 @@ export const MarkdownEditor = forwardRef<EditorHandle, {
     editor.dispatch({selection:{anchor:from,head:to},effects:[searchMarkEffect.of({from,to,serial:highlight.serial}),EditorView.scrollIntoView(from,{y:"center"})],annotations:Transaction.addToHistory.of(false)});
     editor.focus();return true;
   } }), []);
+
+  function currentEditor(range: EditorRange, editing = false) {
+    const editor = view.current;
+    if (!activeRef.current || !editor || editor.state.doc !== range.doc || editor.compositionStarted ||
+      editing && (editor.state.readOnly || focusCurrentRef.current?.() === false)) return;
+    return editor;
+  }
+
+  async function copySelection(range: EditorRange, cut = false) {
+    const editor = currentEditor(range, cut);
+    if (!editor || range.from === range.to) return;
+    editor.focus();
+    const selection = editor.state.selection.main;
+    // The native copy action also works on plain HTTP when the editor has focus.
+    let native = false;
+    try { if (selection.from === range.from && selection.to === range.to) native = document.execCommand?.("copy") ?? false; }
+    catch { /* Fall back to the shared clipboard action. */ }
+    const copied = native || await copyText(editor.state.sliceDoc(range.from, range.to));
+    if (cut && copied && currentEditor(range, true)) {
+      editor.dispatch({ changes: { from: range.from, to: range.to }, selection: { anchor: range.from }, userEvent: "delete.cut", scrollIntoView: true });
+    }
+  }
+
+  async function pasteSelection(range: EditorRange) {
+    const editor = currentEditor(range, true);
+    if (!editor) return;
+    try {
+      if (!navigator.clipboard?.readText) throw new Error("剪贴板不可用");
+      const text = await navigator.clipboard.readText();
+      if (!text || !currentEditor(range, true)) return;
+      const insert = editor.state.toText(text);
+      editor.dispatch({ changes: { from: range.from, to: range.to, insert }, selection: { anchor: range.from + insert.length }, userEvent: "input.paste", scrollIntoView: true });
+      editor.focus();
+    } catch {
+      if (!currentEditor(range, true)) return;
+      editor.dispatch({ selection: { anchor: range.from, head: range.to } });
+      editor.focus();
+      onError?.("无法直接读取剪贴板，请按 Ctrl+V 粘贴。");
+    }
+  }
+
   return <div className="editor-shell">
     <FormattingToolbar onAction={format} disabled={disabled} />
-    <div className="codemirror-host" ref={host} aria-label="Markdown 编辑器" onContextMenu={event=>{
-      const editor = view.current;
-      if (!editor) return;
-      const copySelection = !editor.state.selection.main.empty;
-      if (!copySelection && !onCopyBlock) return;
+    <div className="codemirror-host" ref={host} aria-label="Markdown 编辑器" onContextMenu={event => {
+      const editor = view.current, target = event.target;
+      if (!editor || !active || editor.compositionStarted || !(target instanceof Element) || !editor.scrollDOM.contains(target)) return;
       event.preventDefault();
-      if (!copySelection) {
-        const at = editor.posAtCoords({x:event.clientX,y:event.clientY});
-        if (at !== null) editor.dispatch({selection:{anchor:at}});
-      }
-      setBlockMenu({x:event.clientX,y:event.clientY,copySelection});
+      const { from, to } = editor.state.selection.main;
+      const keyboard = event.button !== 2 && event.clientX === 0 && event.clientY === 0;
+      const line = target.closest(".cm-line");
+      const clicked = keyboard ? from : line && editor.contentDOM.contains(line)
+        ? editor.posAtCoords({ x: event.clientX, y: event.clientY }) ?? editor.posAtDOM(line) : null;
+      const range = { doc: editor.state.doc, from: from === to ? clicked ?? from : from, to: from === to ? clicked ?? to : to };
+      const location = keyboard ? editor.coordsAtPos(from) : null;
+      setMenu({ range, x: location?.left ?? event.clientX, y: location?.bottom ?? event.clientY, keyboard });
     }} />
-    {blockMenu&&<div role="menu" className="block-context-menu" style={{position:"fixed",left:blockMenu.x,top:blockMenu.y,zIndex:1000}} onPointerDown={event=>event.stopPropagation()} onMouseDown={event=>event.preventDefault()} onKeyDown={event=>{if(event.key==="Escape")setBlockMenu(null);}}>
-      {blockMenu.copySelection&&<button type="button" role="menuitem" onClick={()=>{
-        const editor = view.current;
-        setBlockMenu(null);
-        if (editor) {
-          const { from, to } = editor.state.selection.main;
-          if (from !== to) void copyText(editor.state.sliceDoc(from, to));
-        }
-      }}>复制</button>}
-      {onCopyBlock&&!blockMenu.copySelection&&<button type="button" role="menuitem" title="首次复制会在当前笔记中插入块标记" onClick={()=>{setBlockMenu(null);onCopyBlock();}}>复制当前块 Wiki 链接</button>}
+    {menu && <div role="menu" aria-label="编辑操作" className="file-menu editor-context-menu" ref={element => {
+      menuElement.current = element;
+      if (!element) return;
+      element.style.left = `${Math.max(8, Math.min(menu.x, window.innerWidth - element.offsetWidth - 8))}px`;
+      element.style.top = `${Math.max(8, Math.min(menu.y, window.innerHeight - element.offsetHeight - 8))}px`;
+      if (menu.keyboard && !element.contains(document.activeElement)) element.querySelector<HTMLElement>("button:not(:disabled)")?.focus();
+    }} onMouseDown={event => event.preventDefault()} onKeyDown={event => {
+      if (event.key === "Escape") { event.stopPropagation(); setMenu(null); view.current?.focus(); }
+      if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+        event.preventDefault();
+        const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+        const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        buttons[(index + buttons.length + (event.key === "ArrowDown" ? 1 : -1)) % buttons.length]?.focus();
+      }
+    }}>
+      <button type="button" role="menuitem" disabled={disabled || menu.range.from === menu.range.to} onClick={() => { setMenu(null); void copySelection(menu.range, true); }}>剪切</button>
+      <button type="button" role="menuitem" disabled={menu.range.from === menu.range.to} onClick={() => { setMenu(null); void copySelection(menu.range); }}>复制</button>
+      <button type="button" role="menuitem" disabled={disabled} onClick={() => { setMenu(null); void pasteSelection(menu.range); }}>粘贴</button>
+      <button type="button" role="menuitem" onClick={() => { setMenu(null); const editor = currentEditor(menu.range); if (editor) { selectAll(editor); editor.focus(); } }}>全选</button>
     </div>}
   </div>;
 });

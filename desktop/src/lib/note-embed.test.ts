@@ -16,18 +16,8 @@ describe("笔记嵌入模型",()=>{
   expect(resolveEmbed("目录/a#b.md#章节","源.md",paths)).toMatchObject({path:"目录/a#b.md",fragment:"章节"});
   expect(resolveEmbed("同名","源.md",paths).error).toBe("存在同名笔记");
   expect(resolveEmbed("#章节","源.md",paths).error).toBe("不能嵌入当前笔记");
-  expect(resolveEmbed("目录/a#^块","源.md",paths).error).toContain("无效块 ID");
+  expect(resolveEmbed("目录/a#^old","源.md",paths).error).toBe("不支持的 Wiki 链接片段");
   expect(resolveEmbed("图片.png","源.md",paths).error).toContain("不支持");
- });
- it("跨篇块嵌入按真实块边界提取，拒绝重复 ID",()=>{
-  expect(embedSection("正文 ^one\n\n另一段 ^two","^one").content).toBe("正文 ");
-  expect(embedSection("- 父 ^item\n  - 子\n- 其他","^item").content).toBe("- 父 \n  - 子");
-  expect(embedSection("- 根\n  - 父\n    - 深层 ^deep\n      - 子\n  - 其他","^deep").content).toBe("- 深层 \n  - 子");
-  expect(embedSection("正文 ^id\n\n重复 ^ID","^id").error).toContain("重复");
- });
- it("块嵌入带入同文件内的脚注和链接定义",()=>{
-  const source="参考[^a] 与 [资料][x] ^p\n\n[^a]: 脚注内容\n\n[x]: 文档.md\n\n其他正文";
-  const result=embedSection(source,"^p");expect(result.content).toContain("[^a]: 脚注内容");expect(result.content).toContain("[x]: 文档.md");expect(result.content).not.toContain("其他正文");
  });
  it("通过现有标题 ID 切分并保留下级标题",()=>{
   const source="# 开始\n\n## 重复\n\n内容\n\n### 子项\n\n子内容\n\n## 重复\n\n第二节\n\n# 结束";

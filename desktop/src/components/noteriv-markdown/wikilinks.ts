@@ -5,8 +5,7 @@ import {autocompletion,type CompletionContext,type Completion} from "@codemirror
 import {Decoration,type DecorationSet,EditorView,ViewPlugin,type ViewUpdate,WidgetType} from "@codemirror/view";
 import {decodeString} from "micromark-util-decode-string";
 import {knowledgeForDoc,parseKnowledge,wikiCompletionAllowed,type WikiLink} from "../../lib/wiki-syntax";
-import {wikiTargetForPath,resolveWikiTarget,formatWikiHeading,formatWikiBlock,encodeWikiText,wikiFileRange} from "../../lib/wiki-target";
-import {blockIndex,findBlock} from "../../lib/wiki-block";
+import {wikiTargetForPath,resolveWikiTarget,headingProblem,formatWikiHeading,encodeWikiText,wikiFileRange} from "../../lib/wiki-target";
 import {headingIndex} from "../../lib/heading-index";
 import {wikiPresentation,type WikiServices} from "../../lib/wiki-ui";
 import { visibleRanges } from "../../lib/editor-markdown-index";
@@ -80,19 +79,7 @@ export async function wikiCompletionSource(context:CompletionContext){
  const config=context.state.facet(wikiConfigFacet),path=config.notePath??"",target=decodeString(match[1]);
  if(target.includes("|"))return null;
  const destination=resolveWikiTarget(target,path,config.paths);
- if(destination.fragment?.startsWith("^")){
-  try{
-   config.services?.feedback("正在读取块…",path);
-   const result=config.services?.loadBlocks?await config.services.loadBlocks(target,path):destination.candidates.length===1&&destination.candidates[0]===path?{path,blocks:blockIndex(source)}:null;
-   if(context.aborted||context.view?.compositionStarted||config.active?.()===false)return null;
-   if(!result)throw new Error("块补全需要明确的 Markdown 目标");
-   const query=destination.fragment.slice(1).toLowerCase();
-   const found=result.blocks.blocks.filter(block=>block.markers.length===1&&findBlock(result.blocks,block.markers[0].id).status==="resolved"&&(block.markers[0].id.toLowerCase().includes(query)||block.snippet.toLowerCase().includes(query)));
-   config.services?.feedback(found.length?"块补全："+Math.min(50,found.length)+" / "+found.length+" 项":"没有匹配的块",path);
-   const options:Completion[]=found.slice(0,50).map(block=>({label:block.markers[0].id,detail:block.kind+" · 第 "+block.line+" 行 · "+block.snippet,type:"text",apply(view){try{applyLink(view,context,start,formatWikiBlock(result.path,block.markers[0].id,block.snippet,config.paths));}catch(cause){config.services?.feedback(cause instanceof Error?cause.message:String(cause),path);}}}));
-   return {from:start+2,options,filter:false};
-  }catch(cause){if(!context.aborted&&config.active?.()!==false)config.services?.feedback("块补全："+(cause instanceof Error?cause.message:String(cause)),path);return null;}
- }
+ if(destination.fragment&&headingProblem(destination.fragment))return null;
  if(target.includes("#")&&destination.fragment!==null){
   try{
    config.services?.feedback("正在读取标题…",path);

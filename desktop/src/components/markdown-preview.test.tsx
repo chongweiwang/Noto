@@ -12,8 +12,8 @@ vi.mock("../lib/mermaid", () => ({ renderMermaid: renderDiagram }));
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
 
 it("阅读视图右键复制选中的正文", () => {
-  const copy = vi.fn(), onCopyBlock = vi.fn();
-  render(<MarkdownPreview note="笔记.md" content="选中的正文" onCopyBlock={onCopyBlock} onError={vi.fn()} />);
+  const copy = vi.fn();
+  render(<MarkdownPreview note="笔记.md" content="选中的正文" onError={vi.fn()} />);
   const paragraph = screen.getByText("选中的正文");
   const range = document.createRange();
   range.selectNodeContents(paragraph);
@@ -24,19 +24,17 @@ it("阅读视图右键复制选中的正文", () => {
     fireEvent.contextMenu(paragraph);
     fireEvent.click(screen.getByRole("menuitem", { name: /^复制$/ }));
     expect(copy.mock.calls[0][0].detail).toBe("选中的正文");
-    expect(onCopyBlock).not.toHaveBeenCalled();
   } finally {
     selection.removeAllRanges();
     window.removeEventListener(manualCopyEvent, copy);
   }
 });
 
-it("阅读中隐藏唯一块标记并保留源码定位，重复标记保持可见",()=>{
- const source="正常段落 ^valid\n\n重复一 ^same\n\n重复二 ^SAME";
+it("阅读中旧标记作为普通文本显示",()=>{
+ const source="正常段落 ^old\n\n^standalone";
  const {container}=render(<MarkdownPreview note="笔记.md" content={source} onError={()=>{}}/>);
- expect(container.textContent).toContain("正常段落");expect(container.textContent).not.toContain("^valid");
- expect(container.textContent).toContain("^same");expect(container.textContent).toContain("^SAME");
- expect(container.querySelector('[data-block-from="0"]')?.textContent).toBe("正常段落");
+ expect(container.textContent).toContain("正常段落 ^old");
+ expect(container.textContent).toContain("^standalone");
 });
 
 it("嵌入使用目标已保存内容、只读任务框和隔离标题，点击来源复用 Wiki 导航",async()=>{

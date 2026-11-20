@@ -14,6 +14,13 @@ export function taskLabel(path: string): string { return path.replace(/^任务\/
 export function findEntry(entries: Entry[], path: string): Entry | undefined {
   for (const entry of entries) { if (entry.issue) continue; if (entry.path === path) return entry; const child = findEntry(entry.children, path); if (child) return child; }
 }
+export function sameFileTree(previous: Entry[], next: Entry[]): boolean {
+  return previous === next || previous.length === next.length && previous.every((entry, index) => {
+    const current = next[index];
+    return entry.path === current.path && entry.name === current.name && entry.isDirectory === current.isDirectory &&
+      entry.issue === current.issue && sameFileTree(entry.children, current.children);
+  });
+}
 export function taskGroups(entries: Entry[]): string[] {
   return (findEntry(entries, taskRoot)?.children ?? []).filter((entry) => !entry.issue && entry.isDirectory).map((entry) => entry.path).sort((a, b) => a.localeCompare(b, "zh-CN"));
 }

@@ -23,7 +23,6 @@
 - Wiki 标题引用：参考 `wiki-link-utils.ts`、`toc-utils.ts`、`wikilink-completion.ts` 与 `page.tsx` 的文件优先、光标补全/待定位流程，扩展既有移植的 `noteriv-markdown/wikilinks.ts`。Noto 用 `wiki-target.ts`、`wiki-syntax.ts`、`heading-ids.ts`、`heading-index.ts` 重接统一 Unicode/重名/脚注 ID、明确来源、原会话/草稿门槛及代次取消；只读路径经共享 API，迁移只改文件跨度。未采用参考代码的 ASCII/正则标题定位、最后一个 `#` 猜标题、固定 3 秒超时、Electron/桌面注入对象或全局事件缓存。
 - 搜索命中定位：`desktop/src/components/search-panel.tsx` 参考 `VaultSearch.tsx` 的 200 ms 防抖、紧凑文件/行/摘要、React mark 和键盘选择；参考 `commands_fs.rs/fs_search_in_files` 的分行/有界结果思路。匹配范围、共享快照、Unicode/换行映射、上下文重定位、阅读投影及临时装饰由 Noto 实现，接入既有会话和导航保护；未移植其平台注入 API、绝对路径遍历、仅返回行文本、首个小写下标高亮或选择后关闭弹层。
 - 笔记与标题嵌入：参考 Noteriv `embed-utils.ts` 和编辑器嵌入的章节、只读卡片与来源入口；使用 Noto 的 Markdown AST、路径解析、共享运行时和会话/草稿保护重新实现，不移植 Electron API、全局缓存或正则截断。
-- Wiki 块引用：参考 `wiki-link-utils.ts`、`embed-utils.ts` 的 `#^id` 标记及交互；Noto 用共享 AST 块索引、显式插入事务、重复诊断和保存态嵌入重新实现，不采用逐行猜测及参考工程的平台 API。
 - 工作区和笔记主界面美化：继续参考 `TitleBar.tsx`、`Sidebar.tsx`、`OutlinePanel.tsx` 与主题样式的紧凑布局；新增的工作区 SVG 图标为本项目绘制，编辑会话、文件操作与双端适配仍沿用 Noto 实现。
 - 多主题和图形工作区：`desktop/src/lib/themes.ts` 参考 Noteriv `theme-utils.ts` 的 Catppuccin、Nord、GitHub Dark、Solarized Light 色表，并为对比度调整部分颜色；主题卡片、图谱配色/图例、画布及白板工具参考其 `ThemePicker.tsx`、`GraphView.tsx`、`Canvas.tsx`、`DrawingEditor.tsx`。Noto 保留自己的工作区、用户文件颜色和共享保存流程；未接入参考项目社区主题服务。
 - `desktop/src/app/globals.css`：深色和浅色主题配色分别参考其 Catppuccin Mocha 与 Catppuccin Latte 内置主题。

@@ -11,7 +11,7 @@ import {emptyDrawing,parseDrawing,serializeDrawing,defaultDrawingStyle} from "./
 import {createDrawingElement} from "./drawing-geometry";
 afterEach(()=>vi.unstubAllGlobals());
 const raw="[[项目/目标#草案.md #结果 &#35; 细节|&#91;显示&#93;]] [[#本篇|自己]]\n\n[[项目/目标#草案.md#^block-1|块]]\n\n![[项目/目标#草案.md#^block-1]]";
-const moved=raw.replaceAll("项目/目标#草案.md","归档/目标#草案.md");
+const moved=raw.replace("项目/目标#草案.md","归档/目标#草案.md");
 it("目录迁移维护普通/任务/画布/所有恢复草稿，只改文件部分并保存原文备份",async()=>{
  const vault=new MemoryVault();vault.put("项目/目标#草案.md","# 结果");
  vault.put("首页.md",raw);vault.put("任务/工作/开发.md",taskCategoryMarker+"\n\n# 开发\n\n"+raw);

@@ -21,8 +21,6 @@ import { standardExportPreset, type ExportPreset } from "./export-presets";
 import { base64Text, bounded, checkCancelled, decodeExportImage, maxExportBytes, safeExportImage } from "./export-resources";
 import type { VaultApi } from "./vault-api";
 import {loadNoteEmbeds,parseNoteEmbeds,remarkNoteEmbeds,type EmbedResult} from "./note-embed";
-import {blockIndex,findBlock} from "./wiki-block";
-import {rehypeBlockLocations} from "./wiki-block-render";
 import { remarkCallouts } from "./markdown-callouts";
 
 export type ExportSnapshot = { path:string; content:string; unsaved:boolean; conflict:boolean; paths:string[]; drawingPaths:string[]; capturedAt:number };
@@ -95,7 +93,6 @@ async function renderNote(snapshot:ExportSnapshot, api:ExportApi, options:Render
     return loading;
   }
   let ownHeadings:ReturnType<typeof headingIndex>|undefined;
-  const ownBlocks=blockIndex(snapshot.content),blockAnchors=new Map<string,string>();
   function embedTree(){
    return (root:Root)=>{
     const used=new Set<string>();let index=0;
@@ -180,11 +177,7 @@ async function renderNote(snapshot:ExportSnapshot, api:ExportApi, options:Render
             else if(headingProblem(parsed.fragment))explanation=headingProblem(parsed.fragment)+"："+target;
             else if(parsed.candidates[0]===snapshot.path){
               if(parsed.fragment===null)anchor="";
-              else if(parsed.fragment.startsWith("^")){
-               const found=findBlock(ownBlocks,parsed.fragment.slice(1));
-               const mapped=found.status==="resolved"?blockAnchors.get(found.block!.markers[0].id.toLowerCase()):undefined;
-               if(mapped)anchor=mapped;else explanation=(found.status==="ambiguous"?"块 ID 重复或归属不明确":"文内块不存在")+"："+parsed.fragment;
-              }else {const heading=findHeading(ownHeadings??=headingIndex(snapshot.content),parsed.fragment);if(heading)anchor=heading.id;else explanation="文内标题不存在："+parsed.fragment;}
+              else {const heading=findHeading(ownHeadings??=headingIndex(snapshot.content),parsed.fragment);if(heading)anchor=heading.id;else explanation="文内标题不存在："+parsed.fragment;}
             }else {
               const peer=sections?.get(parsed.candidates[0]);
               const heading=peer&&parsed.fragment?findHeading(headingIndex(peer.snapshot.content),parsed.fragment):null;
@@ -263,7 +256,7 @@ async function renderNote(snapshot:ExportSnapshot, api:ExportApi, options:Render
     };
   }
   const file=await unified().use(remarkParse).use(remarkGfm).use(remarkMath).use(remarkDisplayMath)
-    .use(remarkWikiLinks).use(remarkNoteEmbeds).use(remarkCallouts).use(literalHtml).use(remarkRehype).use(rehypeHeadingIds).use(embedTree).use(rehypeBlockLocations,{navigation:false,anchors:blockAnchors,skipEmbeds:true}).use(rehypeMathErrors)
+    .use(remarkWikiLinks).use(remarkNoteEmbeds).use(remarkCallouts).use(literalHtml).use(remarkRehype).use(rehypeHeadingIds).use(embedTree).use(rehypeMathErrors)
     .use(rehypeKatex,{trust:false}).use(rehypeHighlight).use(exportTree).use(rehypeStringify).process(snapshot.content);
   checkCancelled(signal);
   warnings.sort((a,b)=>a.line-b.line || a.message.localeCompare(b.message));

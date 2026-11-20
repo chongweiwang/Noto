@@ -21,7 +21,7 @@ it.each([
  ["前 \\*星号\\* 后","\\*星号\\*",0],
  ["`const needle`","needle",0],
  ["~~~js\nconst needle = 1; needle;\n~~~","needle",1],
- ["正文 命中 ^unique","命中",0],
+ ["正文 ^unique","unique",0],
 ])("阅读对实际文本投影 %s，位置只消费一次",async(content,query,ordinal)=>{
  const located=vi.fn(),match=highlight(content,query,ordinal);
  const {container,rerender}=render(<MarkdownPreview note="笔记.md" content={content} onError={()=>{}} searchHighlight={match} onSearchLocated={located}/>);
@@ -37,7 +37,6 @@ it.each([
  ["$$\nx^2\n$$","x","source"],
  ["~~~mermaid\nflowchart LR\n A-->B\n~~~","flowchart","source"],
  ["<div>隐藏</div>","隐藏","missing"],
- ["正文 ^unique","unique","source"],
 ])("阅读不可见的原文匹配 %s 不高亮别处同词",async(content,query,status)=>{
  const located=vi.fn(),{container}=render(<MarkdownPreview note="笔记.md" content={content} onError={()=>{}} searchHighlight={highlight(content,query)} onSearchLocated={located}/>);
  await waitFor(()=>expect(located).toHaveBeenCalledWith(1,status));expect(container.querySelector(".search-hit-mark")).toBeNull();

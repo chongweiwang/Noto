@@ -22,8 +22,6 @@ import type {SearchHighlight} from "../lib/note-search";
 import {previewSearch,rehypeSearchBlock,rehypeSearchMark} from "../lib/search-preview";
 import {loadNoteEmbeds,parseNoteEmbeds,remarkNoteEmbeds,resolveEmbed,type EmbedResult} from "../lib/note-embed";
 import {readEmbedSaved} from "../lib/embed-reads";
-import {rehypeBlockLocations} from "../lib/wiki-block-render";
-import type {BlockKind} from "../lib/wiki-block";
 
 function LocalImage({ note, src, alt }: { note: string; src?: string; alt?: string }) {
   const { api: desktop } = useWorkspaceRuntime();
@@ -183,21 +181,20 @@ function MarkdownAnchor({ href, children }: { href?: string; children?: ReactNod
   }}>{children}</a>;
 }
 
-export const MarkdownPreview = memo(function MarkdownPreview({ note, content, onError, onOpenNote, anchor, onAnchorHandled, isAnchorCurrent, wikiPaths = [], drawingPaths=[], onWikiOpen, wikiServices, anchorsInSource = false, onCheckboxChange, checkboxesDisabled = false, headingJump, onHeadingHandled, isHeadingCurrent, searchHighlight, onSearchLocated, onSearchClear, isSearchCurrent, initialScroll = 0, onScrollChange, nested=false, hideHtml=false, embedScope="", embedRevision=0, embedActive=true,onCopyBlock }: {
+export const MarkdownPreview = memo(function MarkdownPreview({ note, content, onError, onOpenNote, anchor, onAnchorHandled, isAnchorCurrent, wikiPaths = [], drawingPaths=[], onWikiOpen, wikiServices, anchorsInSource = false, onCheckboxChange, checkboxesDisabled = false, headingJump, onHeadingHandled, isHeadingCurrent, searchHighlight, onSearchLocated, onSearchClear, isSearchCurrent, initialScroll = 0, onScrollChange, nested=false, hideHtml=false, embedScope="", embedRevision=0, embedActive=true }: {
   note: string; content: string; onError: (error: string) => void;
   onOpenNote?: (path: string, anchor?: string) => void; anchor?: string; onAnchorHandled?: () => void; isAnchorCurrent?:()=>boolean;
   wikiPaths?: string[]; drawingPaths?:string[]; onWikiOpen?: WikiOpen; wikiServices?:WikiServices; anchorsInSource?: boolean;
   onCheckboxChange?: (content: string) => void; checkboxesDisabled?: boolean;
-  headingJump?: { from: number; serial: number; content?:string;kind?:"block" };
+  headingJump?: { from: number; serial: number; content?:string };
   onHeadingHandled?:(serial:number)=>void;
   isHeadingCurrent?:(serial:number)=>boolean;isSearchCurrent?:(serial:number)=>boolean;
   searchHighlight?:SearchHighlight; onSearchLocated?:(serial:number,status:"exact"|"source"|"missing")=>void;onSearchClear?:(serial:number)=>void;
   initialScroll?: number; onScrollChange?: (scroll: number) => void;
   nested?:boolean;hideHtml?:boolean;embedScope?:string;embedRevision?:number;embedActive?:boolean;
-  onCopyBlock?:(kind:BlockKind,from:number,content:string)=>void;
 }) {
-  const [blockMenu,setBlockMenu]=useState<{x:number;y:number;action:{text:string}|{kind:BlockKind;from:number}}|null>(null);
-  useEffect(()=>{if(!blockMenu)return;const close=()=>setBlockMenu(null);window.addEventListener("pointerdown",close);return ()=>window.removeEventListener("pointerdown",close);},[blockMenu]);
+  const [copyMenu,setCopyMenu]=useState<{x:number;y:number;text:string}|null>(null);
+  useEffect(()=>{if(!copyMenu)return;const close=()=>setCopyMenu(null);window.addEventListener("pointerdown",close);return ()=>window.removeEventListener("pointerdown",close);},[copyMenu]);
   const {api}=useWorkspaceRuntime(),identity=useId(),idPrefix=nested?"noto-embed-"+identity.replace(/[^a-zA-Z0-9]/g,"")+"-":"";
   const [retryRevision,setRetryRevision]=useState(0);
   const pathsKey=wikiPaths.join("\0"),drawingPathsKey=drawingPaths.join("\0");
@@ -232,7 +229,7 @@ export const MarkdownPreview = memo(function MarkdownPreview({ note, content, on
   useEffect(() => { if (article.current) article.current.scrollTop = initialScroll; }, []);
   useEffect(() => {
     if (!headingJump) return;
-    const frame = requestAnimationFrame(() => { if(isHeadingCurrent?.(headingJump.serial)===false)return;if(headingJump.content===undefined||headingJump.content===content)article.current?.querySelector<HTMLElement>(`[data-${headingJump.kind==="block"?"block":"heading"}-from="${headingJump.from}"]`)?.scrollIntoView?.({ block: "start" });onHeadingHandled?.(headingJump.serial); });
+    const frame = requestAnimationFrame(() => { if(isHeadingCurrent?.(headingJump.serial)===false)return;if(headingJump.content===undefined||headingJump.content===content)article.current?.querySelector<HTMLElement>(`[data-heading-from="${headingJump.from}"]`)?.scrollIntoView?.({ block: "start" });onHeadingHandled?.(headingJump.serial); });
     return () => cancelAnimationFrame(frame);
   }, [note, content, headingJump?.serial]);
   function scrollToAnchor(value: string) {
@@ -250,29 +247,25 @@ export const MarkdownPreview = memo(function MarkdownPreview({ note, content, on
     return () => cancelAnimationFrame(frame);
   }, [note, content, anchor, onAnchorHandled]);
   const rendered = useMemo(() => (
-    <ReactMarkdown skipHtml={hideHtml} remarkPlugins={[remarkGfm, remarkMath, remarkDisplayMath, remarkWikiLinks,remarkNoteEmbeds,remarkCallouts]} urlTransform={(url) => url.startsWith("noto-wiki:")||url.startsWith("noto-embed:") ? url : defaultUrlTransform(url)} rehypePlugins={[rehypeHeadingIds,[scopedIds,idPrefix],[rehypeBlockLocations,{navigation:!nested}], rehypeCheckboxLocations, rehypeMathErrors, [rehypeSearchBlock,search], [rehypeKatex, { trust: false }], [rehypeHighlight, { ignoreMissing: true }], [rehypeSearchMark,search]]} components={{ pre: MarkdownPre, input: MarkdownCheckbox, img: MarkdownImage, a: MarkdownAnchor,p:MarkdownParagraph }}>{content}</ReactMarkdown>
-  ), [content,hideHtml,idPrefix,nested,search]);
+    <ReactMarkdown skipHtml={hideHtml} remarkPlugins={[remarkGfm, remarkMath, remarkDisplayMath, remarkWikiLinks,remarkNoteEmbeds,remarkCallouts]} urlTransform={(url) => url.startsWith("noto-wiki:")||url.startsWith("noto-embed:") ? url : defaultUrlTransform(url)} rehypePlugins={[rehypeHeadingIds,[scopedIds,idPrefix], rehypeCheckboxLocations, rehypeMathErrors, [rehypeSearchBlock,search], [rehypeKatex, { trust: false }], [rehypeHighlight, { ignoreMissing: true }], [rehypeSearchMark,search]]} components={{ pre: MarkdownPre, input: MarkdownCheckbox, img: MarkdownImage, a: MarkdownAnchor,p:MarkdownParagraph }}>{content}</ReactMarkdown>
+  ), [content,hideHtml,idPrefix,search]);
   return <article ref={article} className="markdown-preview" aria-label="Markdown 预览" onMouseUp={()=>{if(search)onSearchClear?.(search.serial);}} onScroll={(event) => onScrollChange?.(event.currentTarget.scrollTop)} onContextMenu={event=>{
     if(nested){event.stopPropagation();return;}
     const selection = window.getSelection();
     const text = selection && !selection.isCollapsed &&
       article.current?.contains(selection.anchorNode) && article.current.contains(selection.focusNode) ? selection.toString() : "";
-    const target = onCopyBlock && (event.target as HTMLElement).closest<HTMLElement>("[data-block-from]");
-    const action = text ? {text} : target && article.current?.contains(target) ?
-      {from:Number(target.dataset.blockFrom),kind:target.dataset.blockKind as BlockKind} : null;
-    if (!action) return;
+    if (!text) return;
     event.preventDefault();
-    setBlockMenu({x:event.clientX,y:event.clientY,action});
+    setCopyMenu({x:event.clientX,y:event.clientY,text});
   }}>
     <PreviewContext.Provider value={{ content, onChange: onCheckboxChange, disabled: checkboxesDisabled, onError, note, wikiPaths,drawingPaths, onWikiOpen, wikiServices, onOpenNote, anchorsInSource, scrollToAnchor,embeds,nested,embedScope,embedRevision,idPrefix,retryEmbeds:()=>setRetryRevision(value=>value+1) }}>
       {rendered}
     </PreviewContext.Provider>
-    {blockMenu&&<div role="menu" className="block-context-menu" style={{position:"fixed",left:blockMenu.x,top:blockMenu.y,zIndex:1000}} onPointerDown={event=>event.stopPropagation()} onMouseDown={event=>event.preventDefault()} onKeyDown={event=>{if(event.key==="Escape")setBlockMenu(null);}}>
+    {copyMenu&&<div role="menu" className="preview-context-menu" style={{position:"fixed",left:copyMenu.x,top:copyMenu.y,zIndex:1000}} onPointerDown={event=>event.stopPropagation()} onMouseDown={event=>event.preventDefault()} onKeyDown={event=>{if(event.key==="Escape")setCopyMenu(null);}}>
       <button type="button" role="menuitem" onClick={()=>{
-        setBlockMenu(null);
-        if ("text" in blockMenu.action) void copyText(blockMenu.action.text);
-        else onCopyBlock?.(blockMenu.action.kind,blockMenu.action.from,content);
-      }}>{"text" in blockMenu.action ? "复制" : "复制当前块 Wiki 链接"}</button>
+        setCopyMenu(null);
+        void copyText(copyMenu.text);
+      }}>复制</button>
     </div>}
   </article>;
 });

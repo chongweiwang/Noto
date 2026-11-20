@@ -5,9 +5,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { EditorView } from "@codemirror/view";
 import { undo } from "@codemirror/commands";
 import { acceptCompletion, startCompletion } from "@codemirror/autocomplete";
-import { MarkdownEditor,type EditorHandle } from "./markdown-editor";
+import { MarkdownEditor } from "./markdown-editor";
 import { manualCopyEvent } from "../lib/ui-actions";
-import {createRef} from "react";
 
 vi.mock("../lib/mermaid", () => ({ renderMermaid: async () => '<svg xmlns="http://www.w3.org/2000/svg"><text>图表</text></svg>' }));
 afterEach(cleanup);
@@ -19,12 +18,40 @@ it("右键复制选中的原文并保留选区", () => {
   try {
     act(() => view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } }));
     fireEvent.contextMenu(container.querySelector(".cm-content")!, { clientX: 12, clientY: 12 });
+    expect(screen.getByRole("menuitem", { name: "剪切" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "粘贴" })).toBeTruthy();
     fireEvent.click(screen.getByRole("menuitem", { name: /^复制$/ }));
     expect(copy.mock.calls[0][0].detail).toBe("第一段\n\n第二段");
     expect(view.state.selection.main.to).toBe(view.state.doc.length);
     expect(onChange).not.toHaveBeenCalled();
   } finally {
     window.removeEventListener(manualCopyEvent, copy);
+  }
+});
+
+it("右键剪切成功后删除选区，粘贴替换选区，剪贴板被拒时保留原文", async () => {
+  const clip = { writeText: vi.fn(async (_text: string) => {}), readText: vi.fn(async () => "新文字") };
+  const previous = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+  Object.defineProperty(navigator, "clipboard", { configurable: true, value: clip });
+  try {
+    const { container, view } = mount("第一段\n\n第二段");
+    const context = () => fireEvent.contextMenu(container.querySelector(".cm-content")!, { clientX: 30, clientY: 24 });
+    act(() => view.dispatch({ selection: { anchor: 0, head: 3 } }));
+    context();
+    clip.writeText.mockRejectedValueOnce(new Error("denied"));
+    await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "剪切" })); });
+    expect(view.state.doc.toString()).toBe("第一段\n\n第二段");
+    context();
+    await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "剪切" })); });
+    expect(clip.writeText).toHaveBeenLastCalledWith("第一段");
+    expect(view.state.doc.toString()).toBe("\n\n第二段");
+    act(() => view.dispatch({ selection: { anchor: 2, head: 5 } }));
+    context();
+    await act(async () => { fireEvent.click(screen.getByRole("menuitem", { name: "粘贴" })); });
+    expect(view.state.doc.toString()).toBe("\n\n新文字");
+  } finally {
+    if (previous) Object.defineProperty(navigator, "clipboard", previous);
+    else Reflect.deleteProperty(navigator, "clipboard");
   }
 });
 
@@ -45,23 +72,15 @@ it("切换到另一栏后，迟到的自动聚焦不会抢回旧笔记", async (
   } finally { vi.useRealTimers(); }
 });
 
-it("显式复制块标记使用原编辑器的一次可撤销事务",()=>{
-  const ref=createRef<EditorHandle>(),onChange=vi.fn(),source="第一段\n\n第二段";
-  const {container}=render(<MarkdownEditor ref={ref} value={source} notePath="测试.md" disabled={false} live wikiPaths={["测试.md"]} onChange={onChange} onSave={()=>{}} onSaveAs={()=>{}} onImport={()=>{}}/>);
-  const view=EditorView.findFromDOM(container.querySelector<HTMLElement>(".cm-editor")!)!;
-  act(()=>view.dispatch({selection:{anchor:1}}));let result:{link:string;created:boolean}|undefined;
-  act(()=>{result=ref.current!.blockLink!(source,["测试.md"]);});
-  expect(result?.created).toBe(true);expect(result?.link).toMatch(/#\^b-[0-9a-f]{32}/);
-  expect(view.state.doc.toString()).toMatch(/^第一段 \^b-[0-9a-f]{32}\n\n第二段$/);
-  act(()=>{undo(view);});expect(view.state.doc.toString()).toBe(source);
-});
-it("实时编辑只隐藏唯一块标记，光标进入块后显示原文",()=>{
-  const source="开头\n\n带标记 ^one\n\n重复 ^dup\n\n另一个 ^DUP";
-  const {container,view}=mount(source);
-  expect(container.querySelector(".cm-content")?.textContent).not.toContain("^one");
-  expect(container.querySelector(".cm-content")?.textContent).toContain("^dup");
-  act(()=>view.dispatch({selection:{anchor:source.indexOf("带标记")}}));
-  expect(container.querySelector(".cm-content")?.textContent).toContain("^one");expect(view.state.doc.toString()).toBe(source);
+it("实时编辑按原文显示旧标记，右键只提供剪贴和全选",()=>{
+  const source="开头\n\n带标记 ^one";
+  const {container,view,onChange}=mount(source);
+  const line=container.querySelectorAll(".cm-content .cm-line")[2];
+  expect(line.textContent).toBe("带标记 ^one");
+  fireEvent.contextMenu(line,{button:2,clientX:80,clientY:40});
+  expect(screen.getAllByRole("menuitem").map(item=>item.textContent)).toEqual(["剪切","复制","粘贴","全选"]);
+  expect(view.state.doc.toString()).toBe(source);
+  expect(onChange).not.toHaveBeenCalled();
 });
 
 it("中文输入法组合期间格式快捷键不修改未提交文本", () => {

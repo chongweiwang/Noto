@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { calendarHeatmapDays, dateFromDailyPath } from "./calendar";
+import { calendarHeatmapDays } from "./calendar";
 import { documentInfo } from "./document-info";
-import { journalTrend, summarizeVaultNotes } from "./vault-statistics";
+import { summarizeVaultNotes } from "./vault-statistics";
 import type { Note } from "./vault-api";
 
 const note = (path: string, content: string): Note => ({ path, content, version: "1" });
@@ -16,29 +16,21 @@ describe("已保存的知识库统计", () => {
     expect(days.at(-1)).toEqual({ date: "2024-03-01", week: 52, weekday: 4 });
   });
 
-  it("沿用编辑器字数，标签大小写去重，日记须匹配真实日期目录", () => {
-    const notes = [note("项目/说明.md", "# 混合文本\nNoto works #NAS/备份"),
+  it("沿用编辑器字数并按笔记数聚合标签，同篇和大小写变体不重复计数", () => {
+    const notes = [note("项目/说明.md", "# 混合文本\nNoto works #NAS/备份 #nas/备份"),
       note("日记/2024/02/2024-02-29.md", "复盘 #nas/备份"),
-      note("项目/日记/2024/02/2024-02-29.md", "普通笔记 #学习")];
+      note("学习.md", "普通笔记 #学习"), note("空白.md", "")];
     const result = summarizeVaultNotes(notes);
     expect(result.words).toBe(notes.reduce((total, item) => total + documentInfo(item.content).words, 0));
-    expect(result.tags).toBe(2);
-    expect([...result.journal.keys()]).toEqual(["2024-02-29"]);
-    expect(dateFromDailyPath("日记/2023/02/2023-02-29.md")).toBeNull();
-    expect(dateFromDailyPath("日记/2024/03/2024-02-29.md")).toBeNull();
+    expect(result).toMatchObject({ tags: 2, taggedNotes: 3, readableNotes: 4, averageWords: Math.round(result.words / 4) });
+    expect(result.topTags).toEqual([{ label: "NAS/备份", count: 2 }, { label: "学习", count: 1 }]);
   });
 
-  it("周、月、年趋势按本地日期跨年补零，未来日记不计入趋势", () => {
-    const { journal } = summarizeVaultNotes([
-      note("日记/2025/12/2025-12-31.md", "总结"),
-      note("日记/2026/01/2026-01-01.md", "新年计划"),
-      note("日记/2026/01/2026-01-03.md", "明天"),
-    ]);
-    const today = new Date(2026, 0, 2, 12);
-    const week = journalTrend(journal, today, "week");
-    expect(week).toHaveLength(7);
-    expect(week.slice(-3)).toEqual([{ date: "2025-12-31", words: 2 }, { date: "2026-01-01", words: 4 }, { date: "2026-01-02", words: 0 }]);
-    expect(journalTrend(journal, today, "month")).toHaveLength(30);
-    expect(journalTrend(journal, today, "year").slice(-2)).toEqual([{ date: "2025-12", words: 2 }, { date: "2026-01", words: 4 }]);
+  it("长笔记排行按正文篇幅取前五，空笔记不进入排行", () => {
+    const notes = Array.from({ length: 8 }, (_, i) => note(`目录/${i}.md`, "字".repeat(i)));
+    const { longestNotes, averageWords, topTags } = summarizeVaultNotes(notes);
+    expect(longestNotes).toEqual([7, 6, 5, 4, 3].map(i => ({ path: `目录/${i}.md`, words: i })));
+    expect(averageWords).toBe(4);
+    expect(topTags).toEqual([]);
   });
 });

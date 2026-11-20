@@ -9,8 +9,6 @@ import {remarkDisplayMath} from "./rich-markdown";
 import {remarkWikiLinks} from "./wiki-syntax";
 import {textOf} from "./heading-ids";
 import type {SearchHighlight} from "./note-search";
-import {normalizeSearchText,rawSearchOffset} from "./note-search";
-import {blockIndex,findBlock} from "./wiki-block";
 
 type Projection={kind:"text"|"code";nodeFrom:number;nodeTo:number;from:number;to:number;value:string};
 export type PreviewSearch={serial:number;block?:{from:number;tag:string};exact?:Projection};
@@ -48,7 +46,6 @@ function codeProjection(raw:string,value:string,from:number,to:number){
 export function previewSearch(content:string,highlight?:SearchHighlight):PreviewSearch|undefined{
  if(!highlight||highlight.content!==content)return;
  const {from,to,serial}=highlight,result:PreviewSearch={serial},tree=processor.runSync(processor.parse(content),{value:content}) as Root;
- const index=blockIndex(content),markers=index.blocks.flatMap(block=>block.markers.length===1&&findBlock(index,block.markers[0].id).status==="resolved"?[block.markers[0]]:[]);
  let width=Infinity;
  function visit(node:RootContent,inCode=false){
   const start=node.position?.start.offset,end=node.position?.end.offset;
@@ -67,11 +64,7 @@ export function previewSearch(content:string,highlight?:SearchHighlight):Preview
   if(node.type==="text"&&!inCode&&start!==undefined&&end!==undefined&&start<=from&&end>=to){
    const map=mapped(content.slice(start,end),true),a=map.boundaries.get(from-start),b=map.boundaries.get(to-start);
    if(map.text===node.value&&a!==undefined&&b!==undefined&&a<b){
-    const marker=markers.find(item=>!item.standalone&&item.from>=start&&item.to<=end),raw=content.slice(start,end);
-    if(marker&&normalizeSearchText(raw)===node.value){
-     const m=rawSearchOffset(raw,marker.from-start),n=rawSearchOffset(raw,marker.to-start),strip=m>0&&/[ \t]/.test(node.value[m-1])?m-1:m;
-     if(b<=strip||a>=n){const shift=a>=n?n-strip:0;result.exact={kind:"text",nodeFrom:start,nodeTo:end,from:a-shift,to:b-shift,value:node.value.slice(0,strip)+node.value.slice(n)};}
-    }else result.exact={kind:"text",nodeFrom:start,nodeTo:end,from:a,to:b,value:node.value};
+    result.exact={kind:"text",nodeFrom:start,nodeTo:end,from:a,to:b,value:node.value};
    }
   }
  }

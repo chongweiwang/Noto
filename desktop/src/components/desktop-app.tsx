@@ -5,10 +5,9 @@ import {formatDrawingEmbed} from "../lib/note-embed";
 import {saveFeedback} from "../lib/save-feedback";
 import {resolveSearchHit,createSearchHit,type SearchContext,type SearchChoice,type SearchHighlight,type SearchLocal} from "../lib/note-search";
 import {headingIndex,findHeading,type HeadingEntry} from "../lib/heading-index";
-import {resolveWikiTarget,headingProblem,formatWikiHeading,formatWikiBlock} from "../lib/wiki-target";
+import {resolveWikiTarget,headingProblem,formatWikiHeading} from "../lib/wiki-target";
 import type {WikiServices} from "../lib/wiki-ui";
 import {copyText as copyWikiText} from "../lib/ui-actions";
-import {blockIndex,findBlock,type BlockIndex,type BlockKind} from "../lib/wiki-block";
 import {emptyCanvas,serializeCanvas,parseCanvas} from "../lib/canvas-document";
 import {KnowledgeCanvas,type CanvasHandle} from "./knowledge-canvas";
 import {DrawingWhiteboard,type DrawingHandle} from "./drawing-whiteboard";
@@ -42,7 +41,7 @@ import { WorkspaceIcon } from "./workspace-icon";
 import { VaultSwitcher } from "./vault-switcher";
 import { themeVariables } from "../lib/themes";
 import { toggleThemePreference } from "../lib/workspace-state";
-import { defaultTaskGroup, encodePath, ensureDirectory, findEntry, isTaskOrJournalRoot, pathName, relativePath, taskFiles, taskGroupOf, taskGroups } from "../lib/vault-structure";
+import { defaultTaskGroup, encodePath, ensureDirectory, findEntry, isTaskOrJournalRoot, pathName, relativePath, sameFileTree, taskFiles, taskGroupOf, taskGroups } from "../lib/vault-structure";
 import { organizeLegacyVault, RelocationError, relocateNotes, remapPath, rewriteDocumentLinks } from "../lib/relocate-notes";
 import { documentInfo, documentSize, isLargeMarkdown, type DocumentHeading } from "../lib/document-info";
 import { OutlinePanel } from "./outline-panel";
@@ -103,7 +102,8 @@ export default function DesktopApp() {
   const retryAfter = useRef(new Map<string, number>());
   const [trashItems, setTrashItems] = useState<TrashItem[] | null>(null);
   const [copyText, setCopyText] = useState<string | null>(null);
-  const [vault, setVault] = useState<string | null>(null);
+  const [vaultPath, setVault] = useState<string | null>();
+  const vault = vaultPath ?? null;
   const [entries, setEntries] = useState<Entry[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [selected, setSelected] = useState("");
@@ -174,7 +174,7 @@ export default function DesktopApp() {
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [largeOutline, setLargeOutline] = useState<string | null>(null);
   const [positions] = useState(createEditorPositions);
-  const [headingJumps, setHeadingJumps] = useState<Record<string, { from: number; serial: number; content?:string; navigation?:number;kind?:"block" }>>({});
+  const [headingJumps, setHeadingJumps] = useState<Record<string, { from: number; serial: number; content?:string; navigation?:number }>>({});
   const jumpSerial = useRef(0);
   const [taskSettings, setTaskSettings] = useState<TaskViewSettings>({ ...defaultTaskViewSettings, scrolls: {} });
   const [taskFocus, setTaskFocus] = useState<TaskFocus | null>(null);
@@ -244,9 +244,8 @@ export default function DesktopApp() {
   const [editorReady,setEditorReady]=useState(0);
   const markEditorReady=useCallback(()=>setEditorReady(value=>value+1),[]);
   const headingCache=useRef(new Map<string,{content:string;headings:HeadingEntry[]}>());
-  const blockCache=useRef(new Map<string,{content:string;blocks:BlockIndex}>());
   const headingScope=useRef(canvasScope);
-  if(headingScope.current!==canvasScope){headingScope.current=canvasScope;headingCache.current.clear();blockCache.current.clear();}
+  if(headingScope.current!==canvasScope){headingScope.current=canvasScope;headingCache.current.clear();}
   const wikiRequestRef=useRef(requestWiki);wikiRequestRef.current=requestWiki;
   const searchContextRef=useRef<SearchContext|null>(null),searchFlight=useRef<number|null>(null);
   const [searchJump,setSearchJump]=useState<{choice:SearchChoice;sequence:number;generation:number;path:string}|null>(null);
@@ -394,21 +393,11 @@ export default function DesktopApp() {
     if(headingCache.current.size>=128)headingCache.current.delete(headingCache.current.keys().next().value!);
     headingCache.current.set(path,{content,headings});return headings;
   }
-  function cachedBlocks(path:string,content:string){
-    const prior=blockCache.current.get(path);if(prior?.content===content)return prior.blocks;
-    const blocks=blockIndex(content);if(blockCache.current.size>=128)blockCache.current.delete(blockCache.current.keys().next().value!);
-    blockCache.current.set(path,{content,blocks});return blocks;
-  }
   const wikiServices=useMemo<WikiServices>(()=>({
     lookup(path){
       if(recoveriesRef.current[path])return undefined;
       const content=sessionsRef.current[path]?.content??knowledge.notes.find(note=>note.path===path)?.content;
       return content===undefined?undefined:cachedHeadings(path,content);
-    },
-    lookupBlocks(path){
-      if(recoveriesRef.current[path])return undefined;
-      const content=sessionsRef.current[path]?.content??knowledge.notes.find(note=>note.path===path)?.content;
-      return content===undefined?undefined:cachedBlocks(path,content);
     },
     async load(target,source){
       const generation=vaultGeneration.current,pathsKey=pathsRef.current.join("\0"),parsed=resolveWikiTarget(target,source,pathsRef.current);
@@ -423,15 +412,6 @@ export default function DesktopApp() {
       if(recoveriesRef.current[path])throw new Error("目标有待确认草稿，请先处理");
       return {path,headings:cachedHeadings(path,sessionsRef.current[path]?.content??content)};
     },
-    async loadBlocks(target,source){
-      const generation=vaultGeneration.current,pathsKey=pathsRef.current.join("\0"),parsed=resolveWikiTarget(target,source,pathsRef.current);
-      if(parsed.invalid||parsed.candidates.length!==1)throw new Error(parsed.candidates.length>1?"请先明确同名文件的路径":"找不到明确的目标笔记");
-      const path=parsed.candidates[0];if(path===source&&recoveriesRef.current[path])throw new Error("目标有待确认草稿，请先处理");
-      const content=path===source&&sessionsRef.current[path]?sessionsRef.current[path].content:(await desktop.read(path)).content;
-      if(generation!==vaultGeneration.current||pathsKey!==pathsRef.current.join("\0"))throw new Error("知识库或文件路径已变化，块读取已取消");
-      if(path===source&&recoveriesRef.current[path])throw new Error("目标有待确认草稿，请先处理");
-      return {path,blocks:cachedBlocks(path,path===source?sessionsRef.current[path]?.content??content:content)};
-    },
     feedback(value,source){if(currentPathRef.current===source)setNotice(value);}
   }),[knowledge.notes,sessions,recoveries,canvasScope]);
 
@@ -443,32 +423,6 @@ export default function DesktopApp() {
       if(!latest)throw new Error("标题已变化，请重新选择");
       const copied=await copyWikiText(formatWikiHeading(current.note.path,latest,[...new Set([...pathsRef.current,current.note.path])]));
       setNotice(copied?"已复制 Wiki 标题链接。":"请在手动复制窗口中复制标题链接。");
-    }catch(cause){setError(message(cause));}
-  }
-  async function copyBlock(){
-    const current=sessionRef.current,path=current?.note.path;
-    if(!current||!path||!isMarkdown(path)){setError("请先打开 Markdown 笔记");return;}
-    if(recoveryRef.current){setError("请先恢复或丢弃待确认的草稿");return;}
-    if(busyRef.current){setError("文件操作进行中，请稍后重试");return;}
-    try{
-      if((modes[path]??preferencesRef.current.defaultMode)==="preview")throw new Error("请在编辑或源码视图选择要复制的块");
-      const result=editors.current.get(path)?.blockLink?.(current.content,[...new Set([...pathsRef.current,path])]);
-      if(!result)throw new Error("编辑器尚未就绪，请重试");
-      const copied=await copyWikiText(result.link);
-      setNotice((copied?"已复制块链接。":"请在手动复制窗口中复制块链接。")+(result.created?" 已插入块标记，请等待笔记保存。":""));
-    }catch(cause){setError(message(cause));}
-  }
-  async function copyPreviewBlock(path:string,kind:BlockKind,from:number,expected:string){
-    const current=sessionsRef.current[path];if(!current||activeTabRef.current!==path)return;
-    if(recoveriesRef.current[path]){setError("请先恢复或丢弃待确认的草稿");return;}
-    if(busyRef.current){setError("文件操作进行中，请稍后重试");return;}
-    try{
-      if(current.content!==expected)throw new Error("笔记内容已变化，请重新选择块");
-      const index=cachedBlocks(path,current.content),block=index.blocks.find(item=>item.kind===kind&&item.from===from);
-      if(!block||!block.markers.length)throw new Error("该块尚无标记，请在编辑或源码视图创建块链接");
-      if(block.markers.length!==1||findBlock(index,block.markers[0].id).status!=="resolved")throw new Error("块 ID 重复或归属不明确，请先调整原文");
-      const link=formatWikiBlock(path,block.markers[0].id,block.snippet,[...new Set([...pathsRef.current,path])]);
-      const copied=await copyWikiText(link);setNotice(copied?"已复制块链接。":"请在手动复制窗口中复制块链接。");
     }catch(cause){setError(message(cause));}
   }
   function cancelDocumentNavigation(){
@@ -552,15 +506,13 @@ export default function DesktopApp() {
     if(sequence!==navigationSequence.current||generation!==vaultGeneration.current||activeTab!==path){setWikiJump(null);return;}
     if(recoveries[path]||settingsOpen||palette||dialog||historyJob||webdavOpen)return;
     const current=sessions[path];if(!current)return;
-    const isBlock=fragment.startsWith("^"),block=isBlock?findBlock(cachedBlocks(path,current.content),fragment.slice(1)):null;
-    const heading=isBlock?undefined:findHeading(cachedHeadings(path,current.content),fragment);
-    if(isBlock&&block?.status!=="resolved"){setError((block?.status==="ambiguous"?"块 ID 重复或归属不明确":"文件存在，块不存在")+"："+path+"#"+fragment);setWikiJump(null);return;}
-    if(!isBlock&&!heading){setError("文件存在，标题不存在："+path+"#"+fragment);setWikiJump(null);return;}
-    const from=isBlock?block!.block!.from:heading!.from;
+    const heading=findHeading(cachedHeadings(path,current.content),fragment);
+    if(!heading){setError("文件存在，标题不存在："+path+"#"+fragment);setWikiJump(null);return;}
+    const from=heading.from;
     const view=modes[path]??preferencesRef.current.defaultMode;
     if(view!=="preview"&&!editors.current.get(path)?.reveal(from,current.content))return;
-    if(view==="preview"||view==="split")setHeadingJumps(previous=>({...previous,[path]:{from,serial:++jumpSerial.current,content:current.content,navigation:sequence,...(isBlock?{kind:"block" as const}:{})}}));
-    setNotice(isBlock?"已定位块："+fragment+"（"+path+"）":"已定位标题："+heading!.text+"（"+path+"）");setWikiJump(null);
+    if(view==="preview"||view==="split")setHeadingJumps(previous=>({...previous,[path]:{from,serial:++jumpSerial.current,content:current.content,navigation:sequence}}));
+    setNotice("已定位标题："+heading.text+"（"+path+"）");setWikiJump(null);
   },[wikiJump,sessions,recoveries,activeTab,modes,editorReady,settingsOpen,palette,dialog,historyJob,webdavOpen]);
 
 
@@ -936,11 +888,12 @@ export default function DesktopApp() {
     }
     const [files, stored] = await Promise.all([desktop.entries(), desktop.drafts()]);
     setEntries(files); setDrafts(stored);
-    return migration;
+    return { files, stored, migration };
   }
 
-  async function restoreWorkspace(status: VaultStatus, moved: Parameters<typeof remapPath>[1] = [], active = () => true) {
+  async function restoreWorkspace(status: VaultStatus, { files, stored, migration }: Awaited<ReturnType<typeof refreshLists>>, active = () => true) {
     const key = status.vault ? workspaceStorageKey(runtime.kind, status.id ?? status.vault) : null;
+    const moved = migration?.moves ?? [];
     let saved = emptyWorkspace();
     if (key && preferencesRef.current.restoreWorkspace) {
       try { const raw = window.localStorage.getItem(key); if (raw) saved = normalizeWorkspace(JSON.parse(raw)); }
@@ -952,17 +905,19 @@ export default function DesktopApp() {
       saved = { ...saved, graph: { ...saved.graph, center: saved.graph.center && map(saved.graph.center), folder: saved.graph.folder ? map(saved.graph.folder) : "" }, tabs: saved.tabs.map((id) => isFileTab(id) ? map(id) : id), active: saved.active && (isFileTab(saved.active) ? map(saved.active) : saved.active), pinned: saved.pinned.map((id) => isFileTab(id) ? map(id) : id), selected: saved.selected && map(saved.selected), collapsedFolders: saved.collapsedFolders.map(map), taskPath: saved.taskPath && map(saved.taskPath), taskCategory: saved.taskCategory && map(saved.taskCategory), taskGroup: saved.taskGroup && map(saved.taskGroup), modes: Object.fromEntries(Object.entries(saved.modes).map(([path, value]) => [map(path), value])), editors: Object.fromEntries(Object.entries(saved.editors).map(([path, value]) => [map(path), value])), previews: Object.fromEntries(Object.entries(saved.previews).map(([path, value]) => [map(path), value])) };
     }
     const loaded: Record<string, Session> = {}, restored: Record<string, Recovery> = {};
-    let available: string[] = [], files: Entry[] = [];
+    const available = new Set(saved.tabs.length ? documentPaths(files) : []);
+    const unreadable: string[] = [];
     if (saved.tabs.length) {
-      const [found, stored] = await Promise.all([desktop.entries(), desktop.drafts()]);
-      files = found; available = documentPaths(found);
       for (const path of [...new Set([...saved.tabs.filter(isFileTab), ...(saved.tabs.includes(tasksTabId) && saved.taskPath ? [saved.taskPath] : [])])]) {
         const draft = stored.find((item) => item.path === path);
-        if (!available.includes(path) && !draft) continue;
+        if (!available.has(path) && !draft) continue;
         let disk: Note | null = null;
-        if (available.includes(path)) {
+        if (available.has(path)) {
           try { disk = await desktop.read(path); }
-          catch (cause) { if (!draft || isTransient(cause)) throw cause; }
+          catch (cause) {
+            if (isTransient(cause)) throw cause;
+            if (!draft) unreadable.push(`${path}（${message(cause)}）`);
+          }
         }
         if (disk) loaded[path] = { note: disk, content: disk.content, conflict: null };
         if (draft) restored[path] = { draft, disk };
@@ -982,8 +937,8 @@ export default function DesktopApp() {
       initialNoteMode(loaded[id]?.content ?? "", saved.modes[id] ?? preferencesRef.current.defaultMode)])));
     setPreviewed([]); setMobileSidebar(false); setGraphSettings(saved.graph); setTaskSettings(saved.tasks);
     setTaskDocument(saved.taskPath && (loaded[saved.taskPath] || restored[saved.taskPath]) ? saved.taskPath : null);
-    setTaskCategory(saved.taskCategory && available.includes(saved.taskCategory) ? saved.taskCategory : null);
-    setTaskGroup(saved.taskGroup && findEntry(files, saved.taskGroup)?.isDirectory ? saved.taskGroup : null);
+    setTaskCategory(saved.taskCategory && available.has(saved.taskCategory) ? saved.taskCategory : null);
+    setTaskGroup(saved.tabs.length && saved.taskGroup && findEntry(files, saved.taskGroup)?.isDirectory ? saved.taskGroup : null);
     const current = saved.active && opened.includes(saved.active) ? saved.active : opened[0];
     lastNoteTab.current = opened.find(isMarkdown) ?? null;
     if (current) showTab(current); else { setActiveTabNow(null); activateDocument(null); setWorkspace("notes"); }
@@ -991,22 +946,33 @@ export default function DesktopApp() {
     setWidgetDrawer(null);
     setSelected(saved.selected);
     workspaceKey.current = key; workspaceReadyRef.current = true; setWorkspaceReady(true);
-    if (opened.length < saved.tabs.length) setNotice("已恢复工作区；不存在且没有恢复草稿的笔记已跳过。");
+    if (unreadable.length) setError("部分上次打开的笔记无法读取：" + unreadable.join("、"));
+    else if (opened.length < saved.tabs.length) setNotice("已恢复工作区；不存在且没有恢复草稿的笔记已跳过。");
   }
 
   useEffect(() => {
     let active = true;
+    let restoredVault: string | null = null;
+    if (!web) setWorking(true);
     desktop.status().then(async (status) => {
       if (!active) return;
+      restoredVault = status.vault;
       if (status.error) setError(status.error);
       if (status.vault) {
-        setWorking(true);
-        const migrated = await refreshLists(true);
-        if (active) setNotice(migrated?.moves.length ? `已整理 ${migrated.moves.length} 项目录，备份位于 ${migrated.backup}。` : web ? "已连接服务端知识库；草稿保存在当前浏览器。" : "已重新打开上次的知识库。");
-        await restoreWorkspace(status, migrated?.moves, () => active);
+        if (web) setWorking(true);
+        const lists = await refreshLists(true);
+        if (!active) return;
+        const { migration } = lists;
+        setNotice(migration?.moves.length ? `已整理 ${migration.moves.length} 项目录，备份位于 ${migration.backup}。` : web ? "已连接服务端知识库；草稿保存在当前浏览器。" : "已重新打开上次的知识库。");
+        await restoreWorkspace(status, lists, () => active);
       }
-      if (active) setVault(status.vault);
-    }).catch((cause) => { if (active) setError(message(cause)); }).finally(() => { if (active) setWorking(false); });
+    }).catch((cause) => {
+      if (active) setError(message(cause));
+    }).finally(() => {
+      if (!active) return;
+      setVault(restoredVault);
+      setWorking(false);
+    });
     return () => { active = false; cancelTimers(); };
   }, []);
 
@@ -1054,7 +1020,7 @@ export default function DesktopApp() {
       try {
         const files = await desktop.entries();
         if (generation !== vaultGeneration.current || busyRef.current) return;
-        setEntries(files);
+        setEntries(previous => sameFileTree(previous, files) ? previous : files);
         await Promise.all(Object.values(sessionsRef.current).map(async (before) => {
           const path = before.note.path;
           if (saveFlights.current.has(path) || recoveriesRef.current[path] || before.conflict) return;
@@ -1119,8 +1085,9 @@ export default function DesktopApp() {
       draftErrors.current.clear(); setDraftError("");
       setCurrent(null); setSelected(""); setVault(status.vault);
       positions.clear(); setLargeInfo(null); setLargeOutline(null); setHeadingJumps({});
-      const migrated = await refreshLists(true); setNotice(migrated?.moves.length ? `已整理 ${migrated.moves.length} 项目录，备份位于 ${migrated.backup}。` : "知识库已打开。");
-      await restoreWorkspace(status, migrated?.moves);
+      const lists = await refreshLists(true), { migration } = lists;
+      setNotice(migration?.moves.length ? `已整理 ${migration.moves.length} 项目录，备份位于 ${migration.backup}。` : "知识库已打开。");
+      await restoreWorkspace(status, lists);
     } catch (cause) { setError(message(cause)); }
     finally { setWorking(false); resumePending(); setKnowledgeRevision((value) => value + 1); }
   }
@@ -2017,7 +1984,6 @@ export default function DesktopApp() {
     ...([['live', '实时编辑'], ['source', '源码视图'], ['preview', '阅读视图'], ['split', '编辑与预览分屏']] as const).map(([id, label]) => ({ id, label, disabled: workspace !== "notes" || !session || structuredActive, run: () => setMode(id) })),
     { id: "reveal", label: "在文件树中定位当前文档", disabled: !session, run: () => { if (session) revealInTree(session.note.path); } },
     {id:"copy-heading",label:"复制当前标题 Wiki 链接",disabled:workspace!=="notes"||structuredActive||!session||!!recovery||!info.headings.length,run:()=>{const heading=info.headings.filter(item=>item.from<=(positions.get(currentPath??"")?.from??0)).at(-1)??info.headings[0];if(heading)void copyHeading(heading);}},
-    {id:"copy-block",label:"复制当前块 Wiki 链接",detail:"首次复制会在笔记中插入块标记",disabled:workspace!=="notes"||structuredActive||!session||!!recovery,run:()=>{void copyBlock();}},
     { id: "outline", label: "显示或隐藏标题大纲", keys: "Ctrl+Shift+O", disabled: workspace !== "notes" || !session || structuredActive, run: toggleOutline },
     { id: "theme", label: "切换深浅主题", run: toggleTheme },
     { id: "settings", label: "软件设置", keys: "Ctrl+,", run: () => setSettingsOpen(true) },
@@ -2065,6 +2031,7 @@ export default function DesktopApp() {
     </div>;
   }
   const documentInputBlocked = !!(settingsOpen || widgetDrawer || dialog || renaming || movePicker || fileMenu || wikiChoices || palette || historyJob || webdavOpen || imagePreview || pdfPreview || exportJob || batchPicker || batchExport || copyText !== null);
+  if (!web && vaultPath === undefined) return <main className="loading" role="status">正在启动本地知识库…</main>;
   return <main className={`desktop-app theme-${theme}`} data-theme-id={preferences.themeId} data-editor-font={preferences.font} style={{ ...themeVariables(preferences.themeId), "--sidebar-width": `${sidebarWidth}px`, "--outline-width": `${outlineWidth}px`, "--editor-font": fontFamilies[preferences.font], "--editor-font-size": `${preferences.fontSize}px`, "--editor-line-height": preferences.lineHeight, "--content-width": preferences.contentWidth ? `${preferences.contentWidth}px` : "100%", "--split-ratio": splitRatio } as CSSProperties}>
     <header className="titlebar">
       <div className="titlebar-controls">
@@ -2176,11 +2143,11 @@ export default function DesktopApp() {
           if (!current) return <div key={path} role="tabpanel" id={panelId(path)} aria-labelledby={`${panelId(path)}-tab`} hidden={!visible} data-note-pane={panes.right.includes(path) ? "right" : "left"} style={{ display: visible ? undefined : "none", gridColumn: panes.right.includes(path) ? 3 : 1 }} onPointerDownCapture={() => focusVisibleTab(path)} onFocusCapture={() => focusVisibleTab(path)} />;
           return <div className={`editor-area note-panel ${viewMode}`} role="tabpanel" key={path} id={panelId(path)} aria-labelledby={`${panelId(path)}-tab`} hidden={!visible} data-note-pane={panes.right.includes(path) ? "right" : "left"} data-focused={activeTab === path} onPointerDownCapture={() => { focusVisibleTab(path); }} onFocusCapture={() => { focusVisibleTab(path); }} style={!visible ? { display: "none" } : { gridColumn: panes.right.includes(path) ? 3 : 1 }}>
             <div className="editor-mount" hidden={viewMode === "preview"} style={viewMode === "preview" ? { display: "none" } : undefined}>
-              <MarkdownEditor large={large} drawingPaths={drawingPaths} onOpenNote={openLinkedNote} onCopyBlock={()=>{void copyBlock();}} embedScope={canvasScope} embedRevision={knowledgeRevision} ref={(handle) => { if (handle) editors.current.set(path, handle); else editors.current.delete(path); }} value={current.content} notePath={path} disabled={busy || !!recoveries[path]} live={viewMode === "live"} focused={activeTab === path} isFocusCurrent={() => activeTabRef.current === path} active={visible && viewMode !== "preview" && !documentInputBlocked} onError={setError} onImportStateChange={(pending) => setImportingPaths((previous) => pending ? [...new Set([...previous, path])] : previous.filter((item) => item !== path))} onImported={(relative) => { const generation = vaultGeneration.current; setNotice(`附件已保存：${relative}`); void desktop.entries().then((files) => { if (generation === vaultGeneration.current && !busyRef.current) setEntries(files); }).catch((cause) => setError(message(cause))); }} initialState={editorViews.current[path]} onViewStateChange={(state) => { editorViews.current[path] = state; scheduleWorkspace(); }} wikiPaths={paths} searchHighlight={visible&&viewMode!=="preview"&&searchMark?.path===path?searchMark:undefined} onSearchClear={clearSearchHighlight} onReady={markEditorReady} onWikiOpen={openWiki} wikiServices={wikiServices} onPositionChange={(position) => positions.set(path, position)} onDocumentInfo={(content, info) => { if (activeTabRef.current === path && sessionsRef.current[path]?.content === content) setLargeInfo({path, content, info}); }} onChange={(value) => changeContent(value, path)} onSave={() => { void saveCurrent(path); }} onSaveAs={() => { void saveAs(); }} onImport={() => { void importFile(); }} />
+              <MarkdownEditor large={large} drawingPaths={drawingPaths} onOpenNote={openLinkedNote} embedScope={canvasScope} embedRevision={knowledgeRevision} ref={(handle) => { if (handle) editors.current.set(path, handle); else editors.current.delete(path); }} value={current.content} notePath={path} disabled={busy || !!recoveries[path]} live={viewMode === "live"} focused={activeTab === path} isFocusCurrent={() => activeTabRef.current === path} active={visible && viewMode !== "preview" && !documentInputBlocked} onError={setError} onImportStateChange={(pending) => setImportingPaths((previous) => pending ? [...new Set([...previous, path])] : previous.filter((item) => item !== path))} onImported={(relative) => { const generation = vaultGeneration.current; setNotice(`附件已保存：${relative}`); void desktop.entries().then((files) => { if (generation === vaultGeneration.current && !busyRef.current) setEntries(files); }).catch((cause) => setError(message(cause))); }} initialState={editorViews.current[path]} onViewStateChange={(state) => { editorViews.current[path] = state; scheduleWorkspace(); }} wikiPaths={paths} searchHighlight={visible&&viewMode!=="preview"&&searchMark?.path===path?searchMark:undefined} onSearchClear={clearSearchHighlight} onReady={markEditorReady} onWikiOpen={openWiki} wikiServices={wikiServices} onPositionChange={(position) => positions.set(path, position)} onDocumentInfo={(content, info) => { if (activeTabRef.current === path && sessionsRef.current[path]?.content === content) setLargeInfo({path, content, info}); }} onChange={(value) => changeContent(value, path)} onSave={() => { void saveCurrent(path); }} onSaveAs={() => { void saveAs(); }} onImport={() => { void importFile(); }} />
             </div>
             <ResizeHandle label="编辑与预览比例" value={splitRatio} min={.25} max={.75} step={.05} scale={() => document.getElementById(panelId(path))?.clientWidth ?? 800} onChange={setSplitRatio} reset={.5} hidden={viewMode !== "split"} />
             <div className="preview-mount" hidden={viewMode !== "split" && viewMode !== "preview"} style={viewMode !== "split" && viewMode !== "preview" ? { display: "none" } : undefined}>
-              {(large ? visible && previewVisible : previewed.includes(path) || previewVisible) && <MarkdownPreview onCheckboxChange={value=>{if(!busyRef.current&&sessionsRef.current[path]?.content===current.content){focusVisibleTab(path);changeContent(value,path);}}} checkboxesDisabled={busy||!!recoveries[path]} drawingPaths={drawingPaths} onCopyBlock={(kind,from,content)=>{void copyPreviewBlock(path,kind,from,content);}} embedScope={canvasScope} embedRevision={knowledgeRevision} embedActive={visible&&(viewMode === "preview"||viewMode === "split")} initialScroll={previewScrolls.current[path]} onScrollChange={(scroll) => { previewScrolls.current[path] = scroll; scheduleWorkspace(); }} headingJump={visible ? headingJumps[path] : undefined} onHeadingHandled={serial=>setHeadingJumps(previous=>{if(previous[path]?.serial!==serial)return previous;const next={...previous};delete next[path];return next;})} searchHighlight={visible&&searchMark?.path===path?searchMark:undefined} onSearchClear={clearSearchHighlight} isSearchCurrent={serial=>searchMarkRef.current?.serial===serial&&navigationSequence.current===serial&&activeTabRef.current===path&&sessionsRef.current[path]?.content===searchMarkRef.current.content} isHeadingCurrent={serial=>{const job=headingJumps[path];return job?.serial===serial&&activeTabRef.current===path&&(job.navigation===undefined||job.navigation===navigationSequence.current)&&(job.content===undefined||job.content===sessionsRef.current[path]?.content);}} onSearchLocated={(serial,status)=>{if(searchMarkRef.current?.serial===serial&&activeTabRef.current===path){setSearchPreviewStatus(status);if(status!=="exact")setNotice(status==="source"?"已定位所属块，命中位于 Markdown 源码。":"阅读中无法精确映射，请在源码中查看。");}}} note={path} content={current.content} onError={setError} anchor={visible ? pendingAnchor : undefined} isAnchorCurrent={()=>activeTabRef.current===path&&pendingAnchorNavigation.current===navigationSequence.current} onAnchorHandled={clearPendingAnchor} onOpenNote={openLinkedNote} wikiPaths={paths} onWikiOpen={openWiki} wikiServices={wikiServices} />}
+              {(large ? visible && previewVisible : previewed.includes(path) || previewVisible) && <MarkdownPreview onCheckboxChange={value=>{if(!busyRef.current&&sessionsRef.current[path]?.content===current.content){focusVisibleTab(path);changeContent(value,path);}}} checkboxesDisabled={busy||!!recoveries[path]} drawingPaths={drawingPaths} embedScope={canvasScope} embedRevision={knowledgeRevision} embedActive={visible&&(viewMode === "preview"||viewMode === "split")} initialScroll={previewScrolls.current[path]} onScrollChange={(scroll) => { previewScrolls.current[path] = scroll; scheduleWorkspace(); }} headingJump={visible ? headingJumps[path] : undefined} onHeadingHandled={serial=>setHeadingJumps(previous=>{if(previous[path]?.serial!==serial)return previous;const next={...previous};delete next[path];return next;})} searchHighlight={visible&&searchMark?.path===path?searchMark:undefined} onSearchClear={clearSearchHighlight} isSearchCurrent={serial=>searchMarkRef.current?.serial===serial&&navigationSequence.current===serial&&activeTabRef.current===path&&sessionsRef.current[path]?.content===searchMarkRef.current.content} isHeadingCurrent={serial=>{const job=headingJumps[path];return job?.serial===serial&&activeTabRef.current===path&&(job.navigation===undefined||job.navigation===navigationSequence.current)&&(job.content===undefined||job.content===sessionsRef.current[path]?.content);}} onSearchLocated={(serial,status)=>{if(searchMarkRef.current?.serial===serial&&activeTabRef.current===path){setSearchPreviewStatus(status);if(status!=="exact")setNotice(status==="source"?"已定位所属块，命中位于 Markdown 源码。":"阅读中无法精确映射，请在源码中查看。");}}} note={path} content={current.content} onError={setError} anchor={visible ? pendingAnchor : undefined} isAnchorCurrent={()=>activeTabRef.current===path&&pendingAnchorNavigation.current===navigationSequence.current} onAnchorHandled={clearPendingAnchor} onOpenNote={openLinkedNote} wikiPaths={paths} onWikiOpen={openWiki} wikiServices={wikiServices} />}
             </div>
           </div>;
         })}

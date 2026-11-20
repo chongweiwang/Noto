@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { emptyWorkspace, workspaceStorageKey } from "../lib/workspace-state";
 import DesktopApp from "./desktop-app";
 
 const api = vi.hoisted(() => ({
@@ -51,6 +52,61 @@ beforeEach(() => {
   windowMock.destroy.mockResolvedValue(undefined);
 });
 afterEach(() => cleanup());
+
+describe("桌面启动", () => {
+  it("完成知识库检查和标签读取后直接显示上次的笔记", async () => {
+    let finishStatus!: (value: { vault: string; error: null }) => void;
+    let finishRead!: (value: typeof initial) => void;
+    api.status.mockReturnValueOnce(new Promise(resolve => { finishStatus = resolve; }));
+    api.read.mockReturnValueOnce(new Promise(resolve => { finishRead = resolve; }));
+    localStorage.setItem(workspaceStorageKey("desktop", "test-vault"), JSON.stringify({
+      ...emptyWorkspace(), tabs: [initial.path], active: initial.path,
+    }));
+
+    render(<DesktopApp />);
+    expect(screen.getByRole("status").textContent).toBe("正在启动本地知识库…");
+    expect(screen.queryByRole("button", { name: /打开现有知识库/ })).toBeNull();
+
+    await act(async () => { finishStatus({ vault: "test-vault", error: null }); });
+    await waitFor(() => expect(api.read).toHaveBeenCalledWith(initial.path));
+    expect(screen.queryByRole("heading", { name: /创建你的知识空间|打开文档/ })).toBeNull();
+    expect(api.entries).toHaveBeenCalledTimes(2);
+    expect(api.drafts).toHaveBeenCalledTimes(1);
+
+    await act(async () => { finishRead(initial); });
+    expect((await screen.findByLabelText("测试编辑器") as HTMLTextAreaElement).value).toBe(initial.content);
+    expect(screen.getByRole("tab", { name: /^笔记.md/, selected: true })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /打开现有知识库/ })).toBeNull();
+    expect(api.chooseDirectory).not.toHaveBeenCalled();
+  });
+
+  it("确认没有知识库时才显示首次打开界面", async () => {
+    api.status.mockResolvedValueOnce({ vault: null, error: null });
+    render(<DesktopApp />);
+    expect(screen.queryByRole("heading", { name: "创建你的知识空间" })).toBeNull();
+    expect(await screen.findByRole("heading", { name: "创建你的知识空间" })).toBeTruthy();
+  });
+
+  it("已有知识库的工作区读取失败时显示错误并保留当前知识库", async () => {
+    api.drafts.mockRejectedValueOnce(new Error("无法读取恢复草稿"));
+    render(<DesktopApp />);
+    expect((await screen.findByRole("alert")).textContent).toContain("无法读取恢复草稿");
+    expect(screen.getByRole("button", { name: "快速打开笔记" }).textContent).toBe("test-vault");
+    expect(screen.queryByRole("heading", { name: "创建你的知识空间" })).toBeNull();
+  });
+
+  it("启动时单篇无法读取，仍恢复其他标签页", async () => {
+    localStorage.setItem(workspaceStorageKey("desktop", "test-vault"), JSON.stringify({
+      ...emptyWorkspace(), tabs: [initial.path, second.path], active: initial.path,
+    }));
+    api.read.mockRejectedValueOnce(new Error("文件不是 UTF-8"));
+    render(<DesktopApp />);
+    expect((await screen.findByRole("alert")).textContent).toContain(initial.path);
+    expect(screen.getByRole("tab", { name: second.path, selected: true })).toBeTruthy();
+    expect((screen.getByLabelText("测试编辑器") as HTMLTextAreaElement).value).toBe(second.content);
+    expect(api.save).not.toHaveBeenCalled();
+  });
+});
 
 describe("桌面笔记冲突和草稿", () => {
   it("后台保存失败时保留保存期间新输入的内容", async () => {
@@ -302,7 +358,7 @@ describe("桌面界面", () => {
 
   it("可以切换主题并在重新打开时保留选择", async () => {
     const first = render(<DesktopApp />);
-    fireEvent.click(screen.getByRole("button", { name: "切换为浅色主题" }));
+    fireEvent.click(await screen.findByRole("button", { name: "切换为浅色主题" }));
     expect(first.container.querySelector(".desktop-app.theme-light")).toBeTruthy();
     expect(window.localStorage.getItem("noto.theme")).toBe("light");
     first.unmount();

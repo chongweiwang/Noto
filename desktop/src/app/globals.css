@@ -338,22 +338,17 @@ div.math-widget { text-align: center; }
 .dashboard-stats > div:nth-child(4) { background: color-mix(in srgb, var(--peach) 8%, var(--bg-primary)); }
 .dashboard-stats dt { color: var(--text-secondary); font-size: 11px; }
 .dashboard-stats dd { margin: 0; color: var(--text-primary); font-size: 21px; font-weight: 600; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
-.dashboard-trend { padding: 9px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 7px; }
-.dashboard-trend > header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; }
+.dashboard-section { margin-top: 8px; padding: 10px; background: var(--bg-primary); border: 1px solid var(--border); border-radius: 7px; }
+.dashboard-section > header { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; }
 .dashboard-content h3 { margin: 0; color: var(--text-primary); font-size: 13px; font-weight: 600; }
-.dashboard-trend > header span { color: var(--text-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
-.dashboard-ranges { display: flex; gap: 2px; margin: 7px 0; }
-.desktop-app .dashboard-ranges button { flex: 1; padding: 3px 1px; font-size: 11px; }
-.desktop-app .dashboard-ranges button[aria-pressed="true"] { color: var(--accent); background: var(--bg-surface); }
-.dashboard-bars { display: flex; gap: 3px; height: 132px; background: repeating-linear-gradient(to top, var(--border) 0 1px, transparent 1px 33px); }
-.dashboard-bar { display: flex; flex: 1; align-items: flex-end; min-width: 0; }
-.dashboard-bar span { display: block; width: 100%; border-radius: 2px 2px 0 0; background: var(--accent); }
-.dashboard-bar span[data-empty="true"] { background: var(--border); }
-.dashboard-date-range, .dashboard-trend-state { margin: 7px 0 0; color: var(--text-muted); font-size: 11px; line-height: 1.45; }
-.dashboard-trend-state { display: grid; place-items: center; min-height: 132px; margin: 0; text-align: center; }
-.dashboard-recent { margin-top: 14px; }
-.desktop-app .dashboard-recent button { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 3px 8px; width: 100%; padding: 5px 2px; text-align: left; font-size: 12px; font-variant-numeric: tabular-nums; }
-.dashboard-recent button span { color: var(--text-muted); font-size: 11px; }
+.dashboard-section > header span, .dashboard-state { color: var(--text-secondary); font-size: 11px; line-height: 1.45; }
+.dashboard-state { margin: 7px 0 0; }
+.dashboard-list { display: grid; gap: 7px; margin: 8px 0 0; padding: 0; list-style: none; }
+.dashboard-tag, .desktop-app .dashboard-list button { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px; width: 100%; align-items: baseline; text-align: left; font-size: 12px; }
+.dashboard-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-list li span:nth-child(2) { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.dashboard-tag-bar { grid-column: 1 / -1; height: 3px; border-radius: 2px; background: var(--border); }
+.dashboard-tag-bar > span { display: block; height: 100%; border-radius: inherit; background: var(--accent); }
 .desktop-app .wiki-link { color: var(--accent); text-decoration: none; border-bottom: 1px dashed var(--accent); cursor: pointer; }
 .desktop-app .wiki-link.wiki-unresolved { color: var(--text-muted); border-color: var(--text-muted); }
 .wiki-choice { max-height: min(70vh, 540px); overflow: auto; }
@@ -1095,7 +1090,8 @@ div.math-widget { text-align: center; }
 .canvas-drawing-preview img{flex:1;min-height:0;object-fit:contain}
 .live-note-embed{display:inline-block;width:100%;vertical-align:top;white-space:normal}
 .live-note-embed>.markdown-preview,.live-note-embed>span>.markdown-preview{padding:0;background:transparent}
-.block-context-menu{padding:4px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px #0003}
+.preview-context-menu{padding:4px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px #0003}
+.editor-context-menu { z-index: 1000; }
 
 /* Task workspace and knowledge panels share the same quiet, compact controls. */
 .task-sidebar { padding: 10px 8px 0; }

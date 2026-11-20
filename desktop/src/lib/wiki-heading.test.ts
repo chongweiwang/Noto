@@ -53,9 +53,9 @@ describe("Wiki 标题语义",()=>{
  });
 });
 describe("保存后的标题诊断与文件关系",()=>{
- it("标题缺失和无效块 ID 不消除文件级边，未读与失败不使用旧缓存",()=>{
+ it("标题缺失和旧片段不消除文件级边，未读与失败不使用旧缓存",()=>{
   const index=new KnowledgeIndex(),files=["a.md","b.md"];
-  const source={path:"a.md",content:"[[b#存在]] [[b#缺失]] [[b#^块]] [[#本篇]]",version:"v1"};
+  const source={path:"a.md",content:"[[b#存在]] [[b#缺失]] [[b#^old]] [[#本篇]]",version:"v1"};
   const target={path:"b.md",content:"# 存在",version:"v1"};
   const full=index.build(files,[source,target]);
   expect(full.references.map(r=>[r.status,r.heading?.status])).toEqual([["resolved","resolved"],["resolved","missing"],["resolved","invalid"],["resolved","missing"]]);

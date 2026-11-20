@@ -68,56 +68,14 @@ describe.each(["desktop","web"] as const)("Wiki 标题导航 %s",kind=>{
   expect(vault.stored.get("目标.md")?.content).toBe("需要确认的恢复内容");expect(api.save).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button",{name:"恢复草稿"}));await waitFor(()=>expect(view().state.doc.toString()).toBe("需要确认的恢复内容"));
  });
- it("块引用等待恢复草稿并定位恢复后的正文",async()=>{
-  const {api,vault,mount}=fixture(kind),base=vault.notes.get("目标.md")!,draft=target+"\n\n恢复块 ^restore";
-  vault.put("源.md","[[目标#^restore|块恢复]]");vault.stored.set("目标.md",{path:"目标.md",content:draft,baseVersion:base.version});
-  mount();await open("源.md");await link("块恢复");await active("目标.md");
-  expect(screen.getByRole("button",{name:"恢复草稿"})).toBeTruthy();expect(api.save).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button",{name:"恢复草稿"}));
-  await waitFor(()=>expect(view().state.selection.main.head).toBe(draft.indexOf("恢复块")));
-  expect(view().state.doc.toString()).toBe(draft);expect(api.save).not.toHaveBeenCalled();
- });
- it("命令复制当前块时创建可撤销标记并走原编辑会话",async()=>{
-  const {mount,vault}=fixture(kind),clipboard={writeText:vi.fn(async(_text:string)=>{})};vi.stubGlobal("navigator",Object.assign(Object.create(navigator),{clipboard}));
-  mount();await open("目标.md");const editor=view();act(()=>editor.dispatch({selection:{anchor:target.indexOf("正文")}}));
-  fireEvent.click(screen.getByRole("button",{name:"命令面板"}));const palette=await screen.findByRole("dialog",{name:"命令面板"});
-  fireEvent.click(within(palette).getByRole("option",{name:/复制当前块 Wiki 链接/}));
-  await waitFor(()=>expect(clipboard.writeText).toHaveBeenCalledOnce());
-  expect(clipboard.writeText.mock.calls[0][0]).toMatch(/^\[\[\.\/目标\.md#\^b-[0-9a-f]{32}\|正文\]\]$/);
-  expect(editor.state.doc.toString()).toMatch(/正文 \^b-[0-9a-f]{32}/);expect(view()).toBe(editor);
-  act(()=>{undo(editor);});expect(editor.state.doc.toString()).toBe(target);expect(vault.notes.get("目标.md")?.content).toBe(target);
- });
- it("阅读中右键只复制已有唯一块标记",async()=>{
-  const {mount,vault}=fixture(kind),body="# 标题\n\n已有正文 ^block-1",clipboard={writeText:vi.fn(async()=>{})};
-  vi.stubGlobal("navigator",Object.assign(Object.create(navigator),{clipboard}));vault.put("目标.md",body);
-  mount();await open("目标.md");const editor=view();fireEvent.click(screen.getByRole("button",{name:"阅读"}));
-  const block=screen.getByRole("tabpanel").querySelector(`[data-block-from="${body.indexOf("已有正文")}"]`)!;fireEvent.contextMenu(block);
-  fireEvent.click(screen.getByRole("menuitem",{name:"复制当前块 Wiki 链接"}));
-  await waitFor(()=>expect(clipboard.writeText).toHaveBeenCalledWith("[[./目标.md#^block-1|已有正文]]"));
-  expect(editor.state.doc.toString()).toBe(body);
- });
- it("慢保存期间创建块标记并继续输入，迟到确认不覆盖新内容",async()=>{
-  const {mount,vault,api}=fixture(kind),done=deferred(),clipboard={writeText:vi.fn(async()=>{})};let first=true;
-  vi.stubGlobal("navigator",Object.assign(Object.create(navigator),{clipboard}));
-  api.save.mockImplementation(async(path,content,version)=>{if(first){first=false;await done.promise;}return vault.save(path,content,version);});
-  mount();await open("目标.md");const editor=view(),before=target+"\n\n继续编辑";put(editor,before);
-  fireEvent.click(screen.getByRole("button",{name:"保存"}));await waitFor(()=>expect(api.save).toHaveBeenCalled());
-  act(()=>editor.dispatch({selection:{anchor:before.indexOf("正文")}}));fireEvent.click(screen.getByRole("button",{name:"命令面板"}));
-  const palette=await screen.findByRole("dialog",{name:"命令面板"});fireEvent.click(within(palette).getByRole("option",{name:/复制当前块 Wiki 链接/}));
-  await waitFor(()=>expect(clipboard.writeText).toHaveBeenCalledOnce());const marked=editor.state.doc.toString();expect(marked).toMatch(/正文 \^b-[0-9a-f]{32}/);
-  put(editor,marked+"\n新输入");await act(async()=>{done.resolve();await done.promise;});
-  await waitFor(()=>expect(vault.notes.get("目标.md")?.content).toBe(before));
-  expect(editor.state.doc.toString()).toBe(marked+"\n新输入");expect(view()).toBe(editor);
- });
- it.each(["实时编辑","源码","阅读","分屏"])("块链接在 %s 中复用目标会话并定位具体段落",async mode=>{
-  const {mount,vault,api}=fixture(kind),body="# 标题\n\n第一段\n\n目标段落 ^decision\n\n后续";
-  vault.put("源.md","[[目标#^decision|块入口]]");vault.put("目标.md",body);
-  mount();await open("目标.md");const targetEditor=view();fireEvent.click(screen.getByRole("button",{name:mode}));
-  await open("源.md");await link("块入口");await active("目标.md");
-  await waitFor(()=>expect(document.querySelector(".status-notice")?.textContent).toContain("已定位块"));
-  expect(view()).toBe(targetEditor);expect(targetEditor.state.doc.toString()).toBe(body);
-  if(mode!=="阅读")expect(targetEditor.state.selection.main.head).toBe(body.indexOf("目标段落"));
-  if(mode==="阅读"||mode==="分屏")await waitFor(()=>expect(screen.getByRole("tabpanel").querySelector(`[data-block-from="${body.indexOf("目标段落")}"]`)).toBeTruthy());
+ it("旧的块目标提示不支持并留在原笔记",async()=>{
+  const {mount,vault,api}=fixture(kind),content="[[目标#^old|旧链接]]";
+  vault.put("源.md",content);vault.put("目标.md","目标正文 ^old");
+  mount();await open("源.md");await link("旧链接");
+  await screen.findByText("不支持的 Wiki 链接片段：目标#^old");
+  await active("源.md");
+  expect(view().state.doc.toString()).toBe(content);
+  expect(api.read).not.toHaveBeenCalledWith("目标.md");
   expect(api.save).not.toHaveBeenCalled();
  });
  it.each(["实时编辑","源码","阅读","分屏"])("已有目标保持 %s 视图，精确重名定位，重复导航不会回放旧跳转",async(mode)=>{

@@ -8,7 +8,6 @@ import {CompletionContext,acceptCompletion,startCompletion,type CompletionResult
 import {MarkdownEditor} from "./markdown-editor";
 import {wikiCompletionSource,wikiConfigFacet,type WikiConfig} from "./noteriv-markdown/wikilinks";
 import {headingIndex} from "../lib/heading-index";
-import {blockIndex} from "../lib/wiki-block";
 import type {WikiServices} from "../lib/wiki-ui";
 vi.mock("../lib/mermaid",()=>({renderMermaid:async()=>"<svg/>"}));
 afterEach(cleanup);
@@ -21,10 +20,10 @@ function model(doc:string,pos=doc.length,config:Partial<WikiConfig>={}){
 function services(source="# 重复\n\n## 重复\n\n## 重复-1"):WikiServices{
  return {load:vi.fn(async()=>({path:"目标.md",headings:headingIndex(source)})),lookup:()=>undefined,feedback:vi.fn()};
 }
-it("块补全只列出已有且唯一的标记并保留别名",async()=>{
- const api=services();api.loadBlocks=vi.fn(async()=>({path:"目标.md",blocks:blockIndex("目标正文 ^good\n\n重复 ^dup\n\n重复二 ^DUP")}));
- const doc="[[目标#^|原别名]] 邻近正文",pos=doc.indexOf("|");const m=model(doc,pos,{services:api});
- try{const result=await m.result();expect(result?.options.map(option=>option.label)).toEqual(["good"]);m.apply(result!);expect(m.view.state.doc.toString()).toBe("[[./目标.md#^good|原别名]] 邻近正文");expect(api.loadBlocks).toHaveBeenCalledWith("目标#^","源.md");}finally{m.destroy();}
+it("旧片段不触发标题读取或补全",async()=>{
+ const api=services(),doc="[[目标#^old|原别名]] 邻近正文";
+ const m=model(doc,doc.indexOf("|"),{services:api});
+ try{expect(await m.result()).toBeNull();expect(api.load).not.toHaveBeenCalled();}finally{m.destroy();}
 });
 it("真实编辑器在 # 后异步补全重名标题，保留原别名、右括号和相邻文本",async()=>{
  const value="[[目标#|&#91;原别名&#93;]] 邻近正文",api=services();

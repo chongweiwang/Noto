@@ -6,7 +6,6 @@ import {parseKnowledge} from "./wiki-syntax";
 import {resolveWikiTarget,headingProblem} from "./wiki-target";
 import {headingIndex,findHeading,type HeadingEntry} from "./heading-index";
 import {parseNoteEmbeds,unsupportedEmbedFile} from "./note-embed";
-import {blockIndex,findBlock,type BlockIndex} from "./wiki-block";
 export {parseKnowledge,knowledgeForDoc,wikiCompletionAllowed,remarkWikiLinks,type WikiLink} from "./wiki-syntax";
 export {resolveWiki,wikiTargetForPath,resolveWikiTarget} from "./wiki-target";
 
@@ -24,7 +23,7 @@ export type RelationIndex = { paths: string[]; readable: Set<string>; references
 
 // Cache only parse products of saved versions, never dirty sessions or UI state.
 export class KnowledgeIndex {
- private cache=new Map<string,{version:string;content:string;parsed:ReturnType<typeof parseKnowledge>;embeds:ReturnType<typeof parseNoteEmbeds>;headings?:HeadingEntry[];blocks?:BlockIndex}>();
+ private cache=new Map<string,{version:string;content:string;parsed:ReturnType<typeof parseKnowledge>;embeds:ReturnType<typeof parseNoteEmbeds>;headings?:HeadingEntry[]}>();
  build(paths:string[],notes:Note[]):RelationIndex {
   const known=new Set(paths),readable=new Set<string>(),references:NoteReference[]=[];
   for(const key of this.cache.keys())if(!known.has(key))this.cache.delete(key);
@@ -55,14 +54,9 @@ export class KnowledgeIndex {
      ref.heading={fragment:target.fragment,status:problem?"invalid":"unknown",...(problem?{message:problem}:{})};
      if(!problem&&ref.status==="resolved"&&ref.target&&readable.has(ref.target)){
       const destination=this.cache.get(ref.target)!;
-      if(target.fragment.startsWith("^")){
-       destination.blocks??=blockIndex(destination.content);const hit=findBlock(destination.blocks,target.fragment.slice(1));
-       ref.heading=hit.status==="resolved"?{fragment:target.fragment,status:"resolved",id:hit.block!.markers[0].id}:{fragment:target.fragment,status:hit.status,message:hit.status==="ambiguous"?"块 ID 重复或归属不明确":hit.status==="invalid"?"无效块 ID":"文件存在，块不存在"};
-      }else{
-       destination.headings??=headingIndex(destination.content);
-       const hit=findHeading(destination.headings,target.fragment);
-       ref.heading=hit?{fragment:target.fragment,status:"resolved",id:hit.id}:{fragment:target.fragment,status:"missing",message:"文件存在，标题不存在"};
-      }
+      destination.headings??=headingIndex(destination.content);
+      const hit=findHeading(destination.headings,target.fragment);
+      ref.heading=hit?{fragment:target.fragment,status:"resolved",id:hit.id}:{fragment:target.fragment,status:"missing",message:"文件存在，标题不存在"};
      }
     }
    }

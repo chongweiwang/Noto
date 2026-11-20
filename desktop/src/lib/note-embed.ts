@@ -9,7 +9,6 @@ import {resolveWikiTarget,headingProblem,encodeWikiText} from "./wiki-target";
 import type {Note} from "./vault-api";
 import type {Root} from "mdast";
 import type {VFile} from "vfile";
-import {blockIndex,findBlock} from "./wiki-block";
 import {isDrawing} from "./document-kind";
 import {drawingPreview} from "./drawing-preview";
 
@@ -75,7 +74,7 @@ export function resolveEmbed(target:string,source:string,paths:string[],drawingP
   if(drawing.candidates.length>1)return {fragment:drawing.fragment,candidates:drawing.candidates,error:"存在同名白板"};
   if(!drawing.candidates.length)return {fragment:drawing.fragment,candidates:[],error:"白板不存在"};
   const path=drawing.candidates[0];
-  if(drawing.fragment!==null)return {path,fragment:drawing.fragment,candidates:drawing.candidates,error:"白板不支持标题或块引用"};
+  if(drawing.fragment!==null)return {path,fragment:drawing.fragment,candidates:drawing.candidates,error:"白板不支持标题链接"};
   return {path,fragment:null,candidates:drawing.candidates};
  }
  const parsed=resolveWikiTarget(target,source,paths);
@@ -99,40 +98,8 @@ export function formatDrawingEmbed(path:string,paths:string[]):string {
 
 export function embedSection(content:string,fragment:string|null):{content?:string;error?:string} {
  if(fragment===null)return {content};
- if(fragment.startsWith("^")){
-  const found=findBlock(blockIndex(content),fragment.slice(1));
-  if(found.status!=="resolved"||!found.block)return {error:found.status==="ambiguous"?"块 ID 重复或归属不明确":found.status==="invalid"?"无效块 ID":"文件存在，块不存在"};
-  const block=found.block,marker=block.markers[0];
-  const text=content.slice(block.from,block.to);let body=marker.standalone?text:text.slice(0,marker.from-block.from)+text.slice(marker.to-block.from);
-  if(block.kind==="listItem"){
-   const prefix=content.slice(content.lastIndexOf("\n",block.from-1)+1,block.from);
-   if(prefix){
-    if(!/^ +$/.test(prefix))return {error:"嵌套列表项无法安全提取"};
-    const lines=body.split(/(\r\n|\r|\n)/);
-    for(let i=2;i<lines.length;i+=2){if(!lines[i].trim())continue;if(!lines[i].startsWith(prefix))return {error:"嵌套列表项无法安全提取"};lines[i]=lines[i].slice(prefix.length);}
-    body=lines.join("");
-   }
-  }
-  type RefNode={type:string;identifier?:string;children?:RefNode[];position?:{start:{offset?:number};end:{offset?:number}}};
-  const tree=parser.parse(content) as unknown as RefNode,definitions=new Map<string,RefNode>(),pending:string[]=[];
-  const key=(node:RefNode)=>node.type.startsWith("footnote")?"footnote:"+node.identifier?.toLowerCase():"link:"+node.identifier?.toLowerCase();
-  function collect(node:RefNode){if((node.type==="definition"||node.type==="footnoteDefinition")&&node.identifier&&!definitions.has(key(node)))definitions.set(key(node),node);node.children?.forEach(collect);}collect(tree);
-  function references(node:RefNode,inside:boolean){
-   const start=node.position?.start.offset,end=node.position?.end.offset;
-   const selected=inside||start!==undefined&&end!==undefined&&start>=block.from&&end<=block.to;
-   if(selected&&node.identifier&&["footnoteReference","linkReference","imageReference"].includes(node.type))pending.push(key(node));
-   node.children?.forEach(child=>references(child,inside));
-  }references(tree,false);
-  const seen=new Set<string>(),extra:string[]=[];
-  while(pending.length){
-   const name=pending.shift()!;if(seen.has(name))continue;seen.add(name);if(seen.size>100)return {error:"块引用的脚注或链接定义过多"};
-   const definition=definitions.get(name),start=definition?.position?.start.offset,end=definition?.position?.end.offset;
-   if(!definition||start===undefined||end===undefined)return {error:"块引用的脚注或链接定义无法安全提取"};
-   if(start<block.from||end>block.to)extra.push(content.slice(start,end));
-   references(definition,true);
-  }
-  return {content:body+(extra.length?"\n\n"+extra.join("\n\n"):"")};
- }
+ const problem=headingProblem(fragment);
+ if(problem)return {error:problem};
  const headings=headingIndex(content),heading=findHeading(headings,fragment);
  if(!heading)return {error:"文件存在，标题不存在"};
  const tree=parser.parse(content);

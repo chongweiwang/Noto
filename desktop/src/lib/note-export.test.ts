@@ -25,16 +25,14 @@ it("嵌入目标不可读时保留说明，不能伪装成完整导出",async()=
  expect(parsed(result.html).body.textContent).toContain("读取失败");
  expect(result.warnings.some(item=>item.message.includes("读取失败"))).toBe(true);
 });
-it("块导出锚点避让标题并安全导出跨篇块嵌入",async()=>{
- const input=snapshot("# noto-block-ref\n\n宿主正文 ^ref\n\n[[#^ref|块链接]]\n\n![[其他#^other]]");
- const read=vi.fn(async(path:string)=>({path,version:"v1",content:"目标段落 ![图](图.png) ^other\n\n后续不应包含"})),image=vi.fn(async()=>png);
+it("HTML 保留旧标记原文，旧链接显示提示且不读取嵌入目标",async()=>{
+ const input=snapshot("宿主正文 ^ref\n\n[[#^ref|旧链接]]\n\n![[其他#^other]]");
+ const read=vi.fn(async(path:string)=>({path,version:"v1",content:"目标段落 ^other"})),image=vi.fn(async()=>png);
  const result=await prepareNoteExport(input,{image,read},{decodeImage}),doc=parsed(result.html);
- const link=[...doc.querySelectorAll("a")].find(node=>node.textContent==="块链接")!;
- const id=decodeURIComponent(link.getAttribute("href")!.slice(1));
- expect(id).not.toBe("noto-block-ref");expect(doc.getElementById(id)?.textContent).toBe("宿主正文");
- expect(doc.getElementById("noto-block-ref")?.tagName).toBe("H1");
- const embed=doc.querySelector(".export-note-embed")!;expect(embed.textContent).toContain("目标段落");expect(embed.textContent).not.toContain("后续不应包含");
- expect(image).toHaveBeenCalledWith("其他.md","图.png");
+ expect(doc.body.textContent).toContain("宿主正文 ^ref");
+ expect(doc.querySelector(".export-target")?.textContent).toContain("旧链接（不支持的 Wiki 链接片段");
+ expect(doc.querySelector(".export-note-embed")).toBeNull();
+ expect(read).not.toHaveBeenCalled();
 });
 it("导出真实语法树：GFM、公式、脚注及同名标题的稳定锚点，样式字体自包含",async()=>{
  const source="# 中文\n\n## 重复\n\n## 重复\n\n另一个\n===\n\n- [x] 已完成\n  - 子列表\n\n| 项目 | 值 |\n| --- | ---: |\n| 中文 | 1 |\n\n行内 $x^2$。\n\n$$\n\\frac{1}{2}\n$$\n\n~~~rust\nlet value = 1;\n~~~\n\n脚注[^a]\n\n[^a]: 说明\n\n[重复](#重复-1)";
@@ -125,7 +123,7 @@ it("Wiki 同篇标题使用冻结正文的真实 Unicode/重复/脚注避让 ID�
  expect([...doc.querySelectorAll("a")].filter(a=>!a.classList.contains("data-footnote-backref")).map(a=>a.getAttribute("href"))).toEqual(expect.arrayContaining(["#"+encodeURIComponent("重复-1"),"#"+encodeURIComponent("重复-1-1"),"#footnote-label-1","#"+encodeURIComponent("新标题")]));
  for(const link of doc.querySelectorAll<HTMLAnchorElement>('a[href^="#"]'))expect(doc.getElementById(decodeURIComponent(link.getAttribute("href")!.slice(1)))).not.toBeNull();
  expect(doc.body.textContent).toContain("跨篇（未包含其他笔记：其他.md#章节）");
- expect(result.warnings.map(item=>item.message)).toEqual(expect.arrayContaining(["未包含其他笔记：其他.md#章节","文内标题不存在：丢失","无效块 ID：#^块"]));
+ expect(result.warnings.map(item=>item.message)).toEqual(expect.arrayContaining(["未包含其他笔记：其他.md#章节","文内标题不存在：丢失","不支持的 Wiki 链接片段：#^块"]));
  expect(api.read).not.toHaveBeenCalled();expect(api.image).not.toHaveBeenCalled();
 });
 it("导出文件名保留中文并限制保留名、路径分隔及无效字符",()=>{

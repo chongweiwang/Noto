@@ -1,7 +1,6 @@
 import {decodeString} from "micromark-util-decode-string";
 import {isMarkdown} from "./document-kind";
 import {parseKnowledge,type WikiLink} from "./wiki-syntax";
-import {validBlockId} from "./wiki-block";
 const withoutExtension=(path:string)=>path.replace(/\.(?:md|markdown)$/i,"");
 
 // Wiki paths containing / are rooted at the vault. Bare names match basenames;
@@ -52,7 +51,7 @@ export function resolveWikiTarget(value:string,source:string,paths:string[]):Wik
  return file?{file,fragment,candidates:[],invalid:!validFile(file)}:
   {file,fragment,candidates:isMarkdown(source)?[source]:[],invalid:!isMarkdown(source)};
 }
-export const headingProblem=(fragment:string|null)=>fragment===null?"":!fragment?"缺少标题":fragment.startsWith("^")&&!validBlockId(fragment.slice(1))?"无效块 ID":"";
+export const headingProblem=(fragment:string|null)=>fragment===null?"":!fragment?"缺少标题":fragment.startsWith("^")?"不支持的 Wiki 链接片段":"";
 export function encodeWikiText(value:string){
  if(/[\r\n\u0000-\u001f\u007f]/.test(value))throw new Error("Wiki 链接不能包含换行或控制字符");
  return value.replace(/[&<>\[\]|\\*_~`!$:]/g,char=>"&#"+char.charCodeAt(0)+";");
@@ -66,14 +65,6 @@ export function formatWikiHeading(path:string,heading:{id:string;text:string},pa
  const value="[["+encodeWikiText(file)+"#"+encodeWikiText(heading.id)+"|"+encodeWikiText(alias)+"]]";
  const parsedLink=parseKnowledge(value).wiki[0];
  if(!parsedLink||parsedLink.target!==target||parsedLink.label!==alias)throw new Error("此标题无法安全生成 Wiki 显示文字，请使用标准 Markdown 标题链接");
- return value;
-}
-export function formatWikiBlock(path:string,id:string,alias:string,paths:string[]){
- if(!validBlockId(id)||path.includes("|"))throw new Error("块链接目标无法安全表达");
- const file=wikiHeadingFile(path),target=file+"#^"+id,parsed=resolveWikiTarget(target,path,paths);
- if(parsed.fragment!=="^"+id||parsed.candidates.length!==1||parsed.candidates[0]!==path)throw new Error("块链接与已有文件名冲突，请手动处理");
- const value="[["+encodeWikiText(file)+"#^"+id+"|"+encodeWikiText(alias||id)+"]]",link=parseKnowledge(value).wiki[0];
- if(!link||link.target!==target||link.label!==(alias||id))throw new Error("块链接无法安全生成，请手动处理");
  return value;
 }
 // Boundaries in the decoded target are mapped back to original source bytes.

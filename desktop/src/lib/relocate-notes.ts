@@ -8,7 +8,7 @@ import remarkMath from "remark-math";
 import { decodeString } from "micromark-util-decode-string";
 import type { Note, VaultApi } from "./vault-api";
 import { parseKnowledge, wikiTargetForPath } from "./knowledge";
-import {resolveWikiTarget,wikiHeadingFile,wikiFileRange,encodeWikiText} from "./wiki-target";
+import {resolveWikiTarget,headingProblem,wikiHeadingFile,wikiFileRange,encodeWikiText} from "./wiki-target";
 import {parseNoteEmbeds,unsupportedEmbedFile} from "./note-embed";
 import { resolveNoteLink } from "./markdown-links";
 import { dailyPath } from "./calendar";
@@ -75,6 +75,7 @@ export function rewriteNoteLinks(source: string, oldPath: string, newPath: strin
   visit(parser.parse(source) as Node);
   for (const link of [...parseKnowledge(source).wiki,...parseNoteEmbeds(source).filter(link=>!unsupportedEmbedFile(resolveWikiTarget(link.target,oldPath,paths).file)).map(link=>({...link,from:link.from+1}))]) {
     const before=resolveWikiTarget(link.target,oldPath,paths);
+    if(before.fragment&&headingProblem(before.fragment))continue;
     if(before.candidates.length!==1||!before.file)continue;
     const target=remapPath(before.candidates[0],moves),after=resolveWikiTarget(link.target,newPath,newPaths);
     if(after.candidates.length===1&&after.candidates[0]===target&&after.fragment===before.fragment)continue;

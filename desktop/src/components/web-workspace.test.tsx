@@ -8,6 +8,7 @@ import { WorkspaceRuntimeContext, type WorkspaceRuntime } from "../lib/workspace
 import { WorkspaceError } from "../lib/api-error";
 import { MemoryVault } from "../test/memory-vault";
 import type { WorkspaceApi } from "../lib/vault-api";
+import { VaultAnalysisClient } from "../lib/vault-analysis-client";
 import DesktopApp from "./desktop-app";
 import Home from "../app/page";
 import { appendTask, taskCategoryMarker } from "../lib/tasks";
@@ -52,7 +53,7 @@ describe("共享网页工作区", () => {
     expect(data.getByText("可写")).toBeTruthy();
   });
 
-  it("全年笔记热力图消费活动记录，支持按日查看、键盘和独立开关", async () => {
+  it("仪表盘按目录展示笔记统计，热力图支持按日查看、键盘和独立开关", async () => {
     const now = new Date(), today = localDate(now), journal = dailyPath(today);
     const content = "文".repeat(105);
     const noteActivity = vi.fn(async (starts: number[]) => starts.slice(1).map((_, index) => (
@@ -71,14 +72,18 @@ describe("共享网页工作区", () => {
     const widgets = within(screen.getByRole("group", { name: "小组件" }));
     fireEvent.click(widgets.getByRole("button", { name: "仪表盘" }));
     const dashboard = within(await screen.findByRole("dialog", { name: "仪表盘" }));
-    await dashboard.findByRole("img", { name: /日记共 105 字/ });
+    await dashboard.findByText("#NAS/部署");
     expect(dashboard.getByText("笔记").nextElementSibling?.textContent).toBe("4");
     expect(dashboard.getByText("标签").nextElementSibling?.textContent).toBe("2");
-    fireEvent.click(dashboard.getByRole("button", { name: "30 天" }));
-    expect(dashboard.getByRole("img").children).toHaveLength(30);
+    expect(dashboard.getByText("平均每篇字数").nextElementSibling?.textContent).toMatch(/^\d+$/);
+    expect(dashboard.getByRole("region", { name: "篇幅最长的笔记" }).querySelector("button")?.textContent).toContain("105 字");
     fireEvent.change(dashboard.getByRole("combobox", { name: "统计目录" }), { target: { value: "项目" } });
     expect(dashboard.getByText("笔记").nextElementSibling?.textContent).toBe("1");
-    await dashboard.findByText("这段时间没有可统计的日记内容");
+    const ranked = await dashboard.findByRole("button", { name: /项目\/说明\.md/ });
+    expect(dashboard.getByText("1 / 1 篇有标签")).toBeTruthy();
+    fireEvent.click(ranked);
+    await screen.findByRole("tab", { name: "说明.md", selected: true });
+    fireEvent.click(screen.getByRole("tab", { name: "a.md" }));
 
     fireEvent.click(widgets.getByRole("button", { name: "笔记热力图" }));
     const drawer = await screen.findByRole("dialog", { name: "笔记热力图" });
@@ -108,6 +113,34 @@ describe("共享网页工作区", () => {
     expect(screen.queryByRole("dialog", { name: "笔记热力图" })).toBeNull();
     expect(screen.getByRole("button", { name: "仪表盘" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "日历" })).toBeTruthy();
+  });
+
+  it("文件树轮询只有发生变化时才重新计算仪表盘", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    const analysis = vi.spyOn(VaultAnalysisClient.prototype, "run");
+    try {
+      const { api, vault } = setup();
+      const entries = vi.spyOn(api, "entries");
+      await screen.findByRole("button", { name: "a.md" });
+      fireEvent.click(screen.getByRole("button", { name: "仪表盘" }));
+      const dashboard = within(await screen.findByRole("dialog", { name: "仪表盘" }));
+      await dashboard.findByRole("region", { name: "篇幅最长的笔记" });
+      const initialReads = entries.mock.calls.length;
+      const statisticsRuns = () => analysis.mock.calls.filter(([query]) => query.kind === "statistics").length;
+      const initialRuns = statisticsRuns();
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      expect(entries.mock.calls.length).toBe(initialReads + 1);
+      expect(statisticsRuns()).toBe(initialRuns);
+
+      vault.put("新增.md", "新笔记 #新增");
+      await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+      expect(await dashboard.findByText("#新增")).toBeTruthy();
+      expect(statisticsRuns()).toBeGreaterThan(initialRuns);
+    } finally {
+      analysis.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("真实网页入口经 HTTP 和 IndexedDB 显示同一文件树分组及最新工具入口", async () => {
