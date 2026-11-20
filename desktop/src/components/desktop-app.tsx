@@ -30,7 +30,9 @@ import { DashboardPanel } from "./dashboard-panel";
 import { NoteHeatmap } from "./note-heatmap";
 import { WidgetDrawer } from "./widget-drawer";
 import { TagPanel } from "./tag-panel";
-import { KnowledgeIndex, notePaths, wikiTargetForPath, referenceHasIssue } from "../lib/knowledge";
+import { notePaths, wikiTargetForPath, type RelationIndex } from "../lib/knowledge";
+import { useVaultAnalysis } from "../lib/vault-analysis-client";
+import type { VaultAnswer } from "../lib/vault-analysis";
 import { dailyPath, localDate } from "../lib/calendar";
 import { appendExistingTask, isTaskCategoryDocument, parseTaskDocument, removeTask, taskCategoryMarker, taskFolder, taskMoveIssue, type TaskStatus } from "../lib/tasks";
 import { appendManagedTask, changeManagedTask, placeTask, taskWritable } from "../lib/task-board";
@@ -60,12 +62,15 @@ import { ImageViewer } from "./image-viewer";
 import { PdfViewer } from "./pdf-viewer";
 import type { GraphicFormat } from "../lib/graphic-export";
 import { KnowledgeGraphView } from "./knowledge-graph-view";
-import { buildGraph } from "../lib/knowledge-graph";
+import type { KnowledgeGraph } from "../lib/knowledge-graph";
 import { imagePreviewEvent, isPdfPath, manualCopyEvent, pdfPreviewEvent, previewPdf } from "../lib/ui-actions";
 import { attachmentMarkdown } from "../lib/attachment-input";
 import { graphTabId, isFileTab, defaultGraphSettings, type GraphSettings, defaultTaskViewSettings, type TaskViewSettings, defaultPreferences, emptyWorkspace, fontFamilies, normalizePreferences, normalizeWorkspace, orderTabs, preferencesKey, reorderTabs, workspaceStorageKey, type AppPreferences, type EditorViewState, type ViewMode, type WorkspaceState } from "../lib/workspace-state";
 
 type Session = { note: Note; content: string; conflict: string | null };
+const emptyRelations: RelationIndex = { paths: [], readable: new Set(), references: [] };
+const emptyGraph: KnowledgeGraph = { nodes: [], edges: [] };
+type RelationAnswer = Extract<VaultAnswer, { kind: "relations" }>;
 function initialNoteMode(content: string, requested: ViewMode): ViewMode {
   return (requested === "preview" || requested === "split") && isLargeMarkdown(content) ? "source" : requested;
 }
@@ -326,10 +331,33 @@ export default function DesktopApp() {
   }, [workspace, session?.content, structuredActive, largeNote, largeInfo, currentPath]);
   const pathsRef = useRef(paths);
   pathsRef.current = paths;
-  const knowledge = useKnowledgeSnapshot(vault, paths, workspace === "graph" || showSidebar && (sidebarView === "search" || sidebarView === "backlinks" || sidebarView === "tags"), knowledgeRevision, vaultGeneration);
-  const relationBuilder = useMemo(() => new KnowledgeIndex(), [vault, desktop, vaultGeneration.current]);
-  const relations = useMemo(() => relationBuilder.build(paths, knowledge.notes), [relationBuilder, paths, knowledge.notes]);
-  const graph = useMemo(() => buildGraph(relations), [relations]);
+  const needsGraph = visibleTab(graphTabId);
+  const needsRelations = needsGraph || showSidebar && sidebarView === "backlinks" && !!session && isMarkdown(session.note.path);
+  const knowledge = useKnowledgeSnapshot(vault, paths, needsRelations || showSidebar && (sidebarView === "search" || sidebarView === "tags"), knowledgeRevision, vaultGeneration);
+  const searchAnalysis = useVaultAnalysis(canvasScope);
+  const graphAnalysis = useVaultAnalysis(canvasScope);
+  const dashboardAnalysis = useVaultAnalysis(canvasScope);
+  const [calculatedRelations, setCalculatedRelations] = useState<{
+    scope: string; paths: string[]; notes: Note[]; answer?: RelationAnswer; error?: string;
+  } | null>(null);
+  const recentRelations = calculatedRelations?.scope === canvasScope ? calculatedRelations : null;
+  const relationsReady = recentRelations?.paths === paths && recentRelations.notes === knowledge.notes &&
+    (!needsGraph || !!recentRelations.answer?.graph || !!recentRelations.error);
+  useEffect(() => {
+    if (!vault || !needsRelations || relationsReady || knowledge.loading && !knowledge.notes.length) return;
+    const job = new AbortController(), notes = knowledge.notes;
+    void graphAnalysis.run({ kind: "relations", paths, graph: needsGraph }, notes, job.signal).then(answer => {
+      if (!job.signal.aborted && answer.kind === "relations") setCalculatedRelations({ scope: canvasScope, paths, notes, answer });
+    }).catch(cause => {
+      if (!job.signal.aborted) setCalculatedRelations({ scope: canvasScope, paths, notes, error: String(cause) });
+    });
+    return () => job.abort();
+  }, [vault, needsRelations, needsGraph, relationsReady, knowledge.notes, knowledge.loading, graphAnalysis, canvasScope, paths]);
+  const relations = recentRelations?.answer?.relations ?? emptyRelations;
+  const graph = recentRelations?.answer?.graph ?? emptyGraph;
+  const relatedLoading = knowledge.loading || needsRelations && !relationsReady;
+  const relatedErrors = relationsReady && recentRelations?.error ?
+    [...knowledge.errors, { path: "笔记关联", error: recentRelations.error }] : knowledge.errors;
   const scannedTasks = useKnowledgeSnapshot(vault, taskCandidates, tabs.includes(tasksTabId), knowledgeRevision, vaultGeneration);
   const taskSnapshot = useMemo(() => {
     const notes = new Map(scannedTasks.notes.map((note) => [note.path, note]));
@@ -2090,9 +2118,9 @@ export default function DesktopApp() {
         <div className="tree-scroll"><FileTree dragScope={canvasScope} entries={entries} selected={selected} collapsed={collapsedFolders} onCollapse={(path, value) => setCollapsedFolders((previous) => value ? [...new Set([...previous, path])] : previous.filter((item) => item !== path))} managedFoldersExpanded={managedFoldersExpanded} onManagedFoldersExpanded={setManagedFoldersExpanded} busy={busy} renaming={renaming} onBeginRename={beginRename} onCancelRename={() => setRenaming(null)} onRename={async (path, name) => !!await changeItem("rename", path, name)} onMove={(from, folder) => { void changeItem("move", from, join(folder, pathName(from))); }} select={(entry) => { void selectEntry(entry); }} context={(path, x, y) => { setSelected(path); setFileMenu({ path, x, y }); }} /></div>
         {drafts.length > 0 && <div className="draft-list"><strong>可恢复草稿</strong>{drafts.map((draft, index) => <button type="button" key={draft.recoveryId ?? draft.path} disabled={busy} title={draft.recoveryId ? "不同网页标签的草稿分别保留" : undefined} onClick={() => openNote(draft.path, draft)}>{draft.path}{drafts.filter((item) => item.path === draft.path).length > 1 ? ` · 草稿 ${index + 1}` : ""}</button>)}</div>}
         </>}
-        {sidebarView === "search" && <SearchPanel key={canvasScope} paths={paths} attachmentPaths={attachmentPaths} snapshot={knowledge} onChoose={chooseSearch} onContext={onSearchContext} onReplace={applySearchReplacement} local={searchLocal} onGlobal={()=>setSearchLocal(null)} onClose={() => setSidebarView("files")} />}
+        {sidebarView === "search" && <SearchPanel key={canvasScope} analysis={searchAnalysis} paths={paths} attachmentPaths={attachmentPaths} snapshot={knowledge} onChoose={chooseSearch} onContext={onSearchContext} onReplace={applySearchReplacement} local={searchLocal} onGlobal={()=>setSearchLocal(null)} onClose={() => setSidebarView("files")} />}
         {sidebarView === "tags" && <TagPanel key={canvasScope} snapshot={knowledge} current={currentPath} busy={busy} onOpen={path=>{openLinkedNote(path);if(narrow)setMobileSidebar(false);}} onClose={() => setSidebarView("files")} />}
-        {sidebarView === "backlinks" && (session&&isMarkdown(session.note.path) ? <BacklinksPanel snapshot={knowledge} target={session.note.path} paths={paths} relations={relations} onWikiOpen={openWiki} onOpen={openReference} onClose={() => setSidebarView("files")} /> : <p className="knowledge-empty">反向链接用于 Markdown 笔记，请先打开一篇笔记。</p>)}
+        {sidebarView === "backlinks" && (session&&isMarkdown(session.note.path) ? <BacklinksPanel snapshot={{...knowledge, loading:relatedLoading, errors:relatedErrors}} target={session.note.path} paths={paths} relations={relations} onWikiOpen={openWiki} onOpen={openReference} onClose={() => setSidebarView("files")} /> : <p className="knowledge-empty">反向链接用于 Markdown 笔记，请先打开一篇笔记。</p>)}
         {sidebarView === "calendar" && <CalendarPanel paths={paths} current={session?.note.path} busy={busy} onDate={(date) => { void openDaily(date); }} onClose={() => setSidebarView("files")} />}
         {sidebarView === "tasks" && <TaskSidebar paths={taskCategories} groups={groups} group={taskGroup} category={taskCategory} busy={busy || !!recovery} onAll={() => { setTaskCategory(null); setTaskGroup(null); setTaskFocus(null); }} onGroup={(path) => { setTaskGroup(path); setTaskCategory(null); setTaskFocus(null); }} onCategory={(path) => { void openTaskCategory(path).then((opened) => { if (opened) { setTaskCategory(path); setTaskGroup(parentOf(path)); setTaskFocus(null); } }); }} onCreate={(group) => { void promptTaskCategory(group); }} onCreateGroup={() => { void promptTaskGroup(); }} onContext={(path, x, y) => { setSelected(path); setFileMenu({ path, x, y }); }} />}
       </aside>}
@@ -2112,7 +2140,7 @@ export default function DesktopApp() {
           {renderDocumentHeader(panes.leftActive, false)}
           {dualPane && renderDocumentHeader(panes.rightActive, true)}
         {tabs.includes(graphTabId) && <div className="workspace-panel graph-panel" role="tabpanel" id={panelId(graphTabId)} aria-labelledby={panelId(graphTabId) + "-tab"} hidden={!visibleTab(graphTabId)} style={!visibleTab(graphTabId) ? { display: "none" } : undefined} onPointerDownCapture={() => { focusVisibleTab(graphTabId); }} onFocusCapture={() => { focusVisibleTab(graphTabId); }}>
-          <KnowledgeGraphView key={vault} graph={graph} settings={graphSettings} currentNote={graphContextNote.current && tabs.includes(graphContextNote.current) ? graphContextNote.current : null} onChange={(patch) => setGraphSettings((previous) => ({ ...previous, ...patch }))} onOpen={openReference} active={visibleTab(graphTabId)} loading={knowledge.loading} errors={knowledge.errors} issues={relations.references.filter(referenceHasIssue)} theme={preferences.themeId} />
+          <KnowledgeGraphView key={vault} graph={graph} settings={graphSettings} currentNote={graphContextNote.current && tabs.includes(graphContextNote.current) ? graphContextNote.current : null} onChange={(patch) => setGraphSettings((previous) => ({ ...previous, ...patch }))} onOpen={openReference} active={visibleTab(graphTabId)} loading={relatedLoading} errors={relatedErrors} issues={recentRelations?.answer?.issues ?? []} theme={preferences.themeId} />
         </div>}
         {tabs.includes(tasksTabId) && <div className="workspace-panel" role="tabpanel" id={panelId(tasksTabId)} aria-labelledby={`${panelId(tasksTabId)}-tab`} hidden={!visibleTab(tasksTabId)} style={!visibleTab(tasksTabId) ? { display: "none" } : undefined} onPointerDownCapture={() => { focusVisibleTab(tasksTabId); }} onFocusCapture={() => { focusVisibleTab(tasksTabId); }}>
           <TaskWorkspace active={visibleTab(tasksTabId)} settings={taskSettings} onSettings={(patch) => setTaskSettings((previous) => ({ ...previous, ...(typeof patch === "function" ? patch(previous) : patch) }))} onPlace={placeBoardTask} group={taskGroup} category={taskCategory} categories={taskCategories} snapshot={taskSnapshot} session={taskSession} recovery={!!taskRecovery} dirty={!!taskSession && needsDraft(taskSession)} busy={busy} saving={!!taskPath && savingPaths.includes(taskPath)} saveError={taskPath?saveErrors[taskPath]:undefined} focus={taskFocus} paths={paths} draftPaths={drafts.map((draft) => draft.path)} onAdd={addTask} onSelect={(item, toggle) => { void selectTask(item, toggle); }} onEdit={editTask} onDelete={(item) => { void deleteTask(item); }} onMove={(item, target) => { void moveTask(item, target); }} onSource={(path) => { void openTaskSource(path); }} onSave={() => { void saveCurrent(taskPath); }} onError={setError} onOpenNote={openLinkedNote} onWikiOpen={openWiki} wikiServices={wikiServices} />
@@ -2162,7 +2190,7 @@ export default function DesktopApp() {
       {widgetDrawer && <WidgetDrawer id="widget-drawer" title={widgetTitles[widgetDrawer]} wide={widgetDrawer === "heatmap"} onClose={() => setWidgetDrawer(null)}>
         {widgetDrawer === "heatmap"
           ? <NoteHeatmap key={canvasScope} revision={knowledgeRevision} />
-          : <DashboardPanel vault={vault} paths={paths} revision={knowledgeRevision} generation={vaultGeneration} busy={busy} onOpen={path => { setWidgetDrawer(null); openLinkedNote(path); }} />}
+          : <DashboardPanel analysis={dashboardAnalysis} vault={vault} paths={paths} revision={knowledgeRevision} generation={vaultGeneration} busy={busy} onOpen={path => { setWidgetDrawer(null); openLinkedNote(path); }} />}
       </WidgetDrawer>}
     </div>
     <footer className="status-bar"><span className="status-notice" role="status" title={notice}>{busy ? "正在处理…" : saving ? "正在自动保存…" : webdavRunning ? "WebDAV 正在后台同步…" : importingPaths.length ? "正在导入附件，请等待完成…" : notice}</span>{workspace === "notes" && session && !structuredActive && <div className="document-stats" aria-label="笔记统计">{info.words !== null && <span title="中文每个汉字计一字，其他语言按连续词统计；不计 Markdown 格式标记和链接地址">{info.words.toLocaleString()} 字</span>}<span title="Markdown 原文的 Unicode 字符数，包含空白和格式标记">{info.characters.toLocaleString()} 字符</span><span>{info.lines.toLocaleString()} 行</span>{mode !== "preview" && <CursorPosition positions={positions} path={session.note.path} />}</div>}{workspace === "graph" && <span className="document-stats">{graph.nodes.length} 篇笔记 · {graph.edges.length} 条笔记关系 · 基于已保存内容</span>}{workspace === "tasks" && <span className="document-stats">{groups.length} 个分组 · {taskCategories.length} 个分类 · {taskSnapshot.notes.filter((note) => taskCategories.includes(note.path)).reduce((sum, note) => sum + parseTaskDocument(note.content).tasks.length, 0)} 项任务</span>}</footer>

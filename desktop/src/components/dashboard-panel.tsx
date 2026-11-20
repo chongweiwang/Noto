@@ -1,17 +1,24 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { dateFromDailyPath, localDate } from "../lib/calendar";
-import { journalTrend, summarizeVaultNotes, type JournalTrendRange } from "../lib/vault-statistics";
+import { journalTrend, type JournalTrendRange } from "../lib/vault-statistics";
 import { ScanWarnings, useKnowledgeSnapshot } from "./knowledge-sidebar";
+import { useVaultAnalysis, type VaultAnalysisClient } from "../lib/vault-analysis-client";
+import type { VaultStatistics } from "../lib/vault-analysis";
+import type { Note } from "../lib/vault-api";
 
 const ranges = [["week", "7 天"], ["month", "30 天"], ["year", "12 个月"]] as const;
 const number = (value: number) => value.toLocaleString("zh-CN");
+const emptyStats: VaultStatistics = { words: 0, tags: 0, journal: new Map() };
 
-export function DashboardPanel({ vault, paths, revision, generation, busy, onOpen }: {
+export function DashboardPanel({ vault, paths, revision, generation, busy, onOpen, analysis }: {
   vault: string | null; paths: string[]; revision: number; generation: { current: number };
   busy: boolean; onOpen: (path: string) => void;
+  analysis?: VaultAnalysisClient;
 }) {
+  const localAnalysis = useVaultAnalysis(vault ?? undefined);
+  const background = analysis ?? localAnalysis;
   const [scope, setScope] = useState("");
   const [range, setRange] = useState<JournalTrendRange>("week");
   const folders = useMemo(() => [...new Set(paths.filter(path => path.includes("/")).map(path => path.split("/", 1)[0]))]
@@ -20,13 +27,25 @@ export function DashboardPanel({ vault, paths, revision, generation, busy, onOpe
   const scopedPaths = useMemo(() => folder === "/" ? paths.filter(path => !path.includes("/")) :
     folder ? paths.filter(path => path.startsWith(folder + "/")) : paths, [paths, folder]);
   const snapshot = useKnowledgeSnapshot(vault, scopedPaths, scopedPaths.length > 0, revision, generation);
-  const stats = useMemo(() => summarizeVaultNotes(snapshot.notes), [snapshot.notes]);
+  const [calculated, setCalculated] = useState<{ paths: string[]; notes: Note[]; stats?: VaultStatistics; error?: string } | null>(null);
+  useEffect(() => {
+    if (!scopedPaths.length || !snapshot.notes.length) return;
+    const job = new AbortController(), notes = snapshot.notes;
+    void background.run({kind:"statistics", paths:scopedPaths}, notes, job.signal).then(answer => {
+      if (!job.signal.aborted && answer.kind === "statistics") setCalculated({ paths: scopedPaths, notes, stats: answer.stats });
+    }).catch(cause => {
+      if (!job.signal.aborted) setCalculated({ paths: scopedPaths, notes, error: String(cause) });
+    });
+    return () => job.abort();
+  }, [background, scopedPaths, snapshot.notes]);
+  const settled = calculated?.paths === scopedPaths && calculated.notes === snapshot.notes ? calculated : null;
+  const stats = settled?.stats ?? (calculated?.paths === scopedPaths && snapshot.notes.length ? calculated.stats : undefined) ?? emptyStats;
   const journals = useMemo(() => scopedPaths.flatMap(path => {
     const date = dateFromDailyPath(path);
     return date ? [{ date, path }] : [];
   }).sort((a, b) => b.date.localeCompare(a.date)), [scopedPaths]);
-  const waiting = scopedPaths.length > 0 && snapshot.loading && snapshot.notes.length === 0;
-  const unavailable = snapshot.errors.length > 0 && snapshot.notes.length === 0;
+  const waiting = scopedPaths.length > 0 && (snapshot.loading && !snapshot.notes.length || snapshot.notes.length > 0 && !settled && stats === emptyStats);
+  const unavailable = !!settled?.error || snapshot.errors.length > 0 && snapshot.notes.length === 0;
   const metrics = [
     { label: "笔记", value: number(scopedPaths.length) },
     { label: "字数", value: waiting || unavailable ? "—" : number(stats.words) },
@@ -72,5 +91,6 @@ export function DashboardPanel({ vault, paths, revision, generation, busy, onOpe
         })}
       </section>}
       <ScanWarnings errors={snapshot.errors}/>
+      {settled?.error && <p role="status" className="dashboard-trend-state">统计失败。{settled.error}</p>}
   </div>;
 }

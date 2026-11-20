@@ -28,11 +28,11 @@ export function literalMatches(content:string,query:string,limit=200):{ranges:{f
 export function createSearchHit(content:string,range:{from:number;to:number}):SearchHit{
  const {from,to}=range,prefix=content.slice(0,from),lines=prefix.split(/\r\n|\r|\n/);
  const lineStart=from-lines.at(-1)!.length,next=content.slice(to).search(/[\r\n]/),lineEnd=next<0?content.length:to+next;
- const start=boundary(content,Math.max(lineStart,from-65),-1),end=boundary(content,Math.min(lineEnd,Math.max(to,from+95)),1);
+ const start=boundary(content,Math.max(lineStart,from-65),-1),end=boundary(content,Math.min(lineEnd,from+95),1);
  return {key:from+":"+to,from,to,line:lines.length,column:[...lines.at(-1)!].length+1,text:content.slice(from,to),
   before:normalizeSearchText(content.slice(boundary(content,Math.max(0,from-48),-1),from)),
   after:normalizeSearchText(content.slice(to,boundary(content,Math.min(content.length,to+48),1))),
-  snippet:{text:content.slice(start,end),from:from-start,to:to-start,leading:start>lineStart,trailing:end<lineEnd}};
+  snippet:{text:content.slice(start,end),from:from-start,to:Math.min(to,end)-start,leading:start>lineStart,trailing:end<lineEnd}};
 }
 function fileResult(path:string,note:Note|undefined,scan:ReturnType<typeof createSearchMatcher>|null,limit:number):SearchFile{
  const hits:SearchHit[]=[];let truncated=false;
@@ -42,12 +42,13 @@ function fileResult(path:string,note:Note|undefined,scan:ReturnType<typeof creat
  }
  return {path,note,pathMatched:scan?!!scan(path).next().value:true,hits,truncated,unread:!note};
 }
-export async function collectSearch(query:string,notes:Note[],paths:string[],cancelled:()=>boolean=()=>false,options:SearchOptions&{perFile?:number;total?:number;yield?:()=>Promise<void>}={}):Promise<SearchResults|null>{
+export async function collectSearch(query:string,notes:Note[],paths:string[],cancelled:()=>boolean=()=>false,options:SearchOptions&{perFile?:number;total?:number;yield?:()=>Promise<void>;progress?:(result:SearchResults)=>void}={}):Promise<SearchResults|null>{
  const text=options.regex?query:searchQuery(query),result:SearchResults={query:text,files:[],hits:0,truncated:false,unscanned:0};
  if(!text&&!options.folder&&!options.tag&&!options.property)return result;
  const scan=text?createSearchMatcher(text,options):null;
  const known=new Map(notes.map(note=>[note.path,note])),files=[...new Set(paths)].filter(isMarkdown).sort((a,b)=>a.localeCompare(b));
  const perFile=Math.max(1,options.perFile??200),total=Math.max(1,options.total??2000);
+ let reportedFiles=0,reportedAt=performance.now();
  for(let index=0;index<files.length;index++){
   if(cancelled())return null;
   if(result.hits>=total){result.truncated=true;result.unscanned=files.length-index;break;}
@@ -56,7 +57,12 @@ export async function collectSearch(query:string,notes:Note[],paths:string[],can
    const file=fileResult(path,note,scan,Math.min(perFile,total-result.hits));
    if(file.hits.length||file.pathMatched){result.files.push(file);result.hits+=file.hits.length;result.truncated||=file.truncated;}
   }
-  if(index%12===11){await (options.yield?.()??new Promise<void>(resolve=>setTimeout(resolve,0)));if(cancelled())return null;}
+  if(index%12===11){
+   if(options.progress&&result.files.length>reportedFiles&&performance.now()-reportedAt>=150){
+    reportedFiles=result.files.length;reportedAt=performance.now();options.progress(result);
+   }
+   await (options.yield?.()??new Promise<void>(resolve=>setTimeout(resolve,0)));if(cancelled())return null;
+  }
  }
  return result;
 }

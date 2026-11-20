@@ -18,15 +18,14 @@ export function useKnowledgeSnapshot(vault: string | null, paths: string[], enab
   const identity = source ? `${source}\0${revision}` : null;
   useEffect(() => {
     if (!identity) { setSnapshot({ identity: null, source: null, notes: [], errors: [], loading: false }); return; }
-    let cancelled = false, running = false, queued = false;
+    const job = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
     const startedAt = generation?.current;
-    const invalid = () => cancelled || (generation !== undefined && generation.current !== startedAt);
+    const invalid = () => job.signal.aborted || (generation !== undefined && generation.current !== startedAt);
     setSnapshot((previous) => previous.source === source ? { ...previous, identity, loading: true } : { identity, source, notes: [], errors: [], loading: true });
     async function refresh() {
-      if (running) { queued = true; return; }
-      running = true;
       try {
-        const result = desktop.snapshot ? await desktop.snapshot(paths).catch((error) => ({ notes: [], errors: [{ path: "知识库", error: error instanceof Error ? error.message : String(error) }] })) : await scanNotes(paths, desktop.read, invalid);
+        const result = desktop.snapshot ? await desktop.snapshot(paths, job.signal).catch((error) => ({ notes: [], errors: [{ path: "知识库", error: error instanceof Error ? error.message : String(error) }] })) : await scanNotes(paths, desktop.read, invalid);
         if (!invalid()) setSnapshot((previous) => {
           if (invalid()) return previous;
           const known = new Map(previous.notes.map((note) => [note.path, note]));
@@ -35,16 +34,16 @@ export function useKnowledgeSnapshot(vault: string | null, paths: string[], enab
             return old?.version === note.version && old.content === note.content ? old : note;
           }).sort((a, b) => a.path.localeCompare(b.path));
           const unchanged = previous.source === source && notes.length === previous.notes.length && notes.every((note, index) => note === previous.notes[index]);
+          if (unchanged && previous.identity === identity && !previous.loading && result.errors.length === previous.errors.length &&
+            result.errors.every(({ path, error }, index) => path === previous.errors[index].path && error === previous.errors[index].error)) return previous;
           return { ...result, notes: unchanged ? previous.notes : notes, identity, source, loading: false };
         });
       } finally {
-        running = false;
-        if (queued && !invalid()) { queued = false; void refresh(); }
+        if (!invalid()) timer = setTimeout(() => { void refresh(); }, 3000);
       }
     }
     void refresh();
-    const interval = setInterval(() => { void refresh(); }, 3000);
-    return () => { cancelled = true; clearInterval(interval); };
+    return () => { job.abort(); clearTimeout(timer); };
   }, [identity]);
   return snapshot.identity === identity ? snapshot : source && snapshot.source === source ? { ...snapshot, loading: true } : { notes: [], errors: [], loading: !!identity };
 }

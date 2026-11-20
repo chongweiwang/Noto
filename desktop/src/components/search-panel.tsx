@@ -2,7 +2,7 @@
 // Compact snippets, 200ms debounce and keyboard selection reference Noteriv's
 // VaultSearch (MIT). Files/ranges and cancellation use Noto's shared snapshots.
 import {useEffect,useId,useMemo,useRef,useState} from "react";
-import {collectSearch,searchQuery,type SearchChoice,type SearchContext,type SearchFile,type SearchHit,type SearchLocal,type SearchResults} from "../lib/note-search";
+import {searchQuery,type SearchChoice,type SearchContext,type SearchFile,type SearchHit,type SearchLocal,type SearchResults} from "../lib/note-search";
 import type {Snapshot} from "../lib/knowledge";
 import { replaceSearchMatches, type SearchOptions } from "../lib/search-options";
 import { parseTagFilters } from "../lib/note-tags";
@@ -10,18 +10,23 @@ import { useWorkspaceRuntime } from "../lib/workspace-runtime";
 import { previewPdf } from "../lib/ui-actions";
 import type { AttachmentHit } from "../lib/attachment-search";
 import type { Note } from "../lib/vault-api";
+import { attachSearchSources, type VaultAnswer } from "../lib/vault-analysis";
+import { useVaultAnalysis, type VaultAnalysisClient } from "../lib/vault-analysis-client";
 
 export interface Replacement { note: Note; content: string; hits: number; offset: number }
 const keyOf=(choice:SearchChoice)=>choice.file.path+"::"+(choice.hit?.key??"file");
 function Snippet({hit}:{hit:SearchHit}){
  const text=hit.snippet;return <>{text.leading?"…":""}{text.text.slice(0,text.from)}<mark>{text.text.slice(text.from,text.to)}</mark>{text.text.slice(text.to)}{text.trailing?"…":""}</>;
 }
-export function SearchPanel({snapshot,paths,attachmentPaths,onOpen,onChoose,onContext,onClose,local,onGlobal,onReplace}:{
+export function SearchPanel({snapshot,paths,attachmentPaths,onOpen,onChoose,onContext,onClose,local,onGlobal,onReplace,analysis}:{
  snapshot:Snapshot&{loading:boolean};paths?:string[];onOpen?:(path:string)=>void;onChoose?:(choice:SearchChoice)=>void;
  onContext?:(context:SearchContext|null)=>void;onClose:()=>void;local?:SearchLocal|null;onGlobal?:()=>void;
  attachmentPaths?: string[]; onReplace?: (items: Replacement[]) => Promise<{ saved: number; skipped: string[] }>;
+ analysis?: VaultAnalysisClient;
 }){
  const {api}=useWorkspaceRuntime();
+ const localAnalysis=useVaultAnalysis();
+ const background=analysis??localAnalysis;
  const [query,setQuery]=useState(""),[composing,setComposing]=useState(false),[batch,setBatch]=useState<{context:SearchContext;result:SearchResults}|null>(null);
  const [options,setOptions]=useState<SearchOptions>({});
  const [replacement,setReplacement]=useState(""),[plan,setPlan]=useState<Replacement[]|null>(null),[applying,setApplying]=useState(false),[replaceReport,setReplaceReport]=useState<{saved:number;skipped:string[]}|null>(null);
@@ -43,17 +48,21 @@ export function SearchPanel({snapshot,paths,attachmentPaths,onOpen,onChoose,onCo
  },[context,composing]);
  useEffect(()=>{setLimit(200);setCollapsed(new Set());setSelected("");},[context]);
  useEffect(()=>{
-  let cancelled=false;setError("");
+  const job=new AbortController();setError("");
   if(composing||!wanted&&!constrained){setSearching(false);setBatch(null);return;}
   setSearching(true);
   const timer=setTimeout(()=>{
    const notes=local?[local.note]:snapshot.notes,files=local?[local.note.path]:pathsKey?pathsKey.split("\0"):[];
-   void collectSearch(wanted,notes,files,()=>cancelled,local?{regex:options.regex,caseSensitive:options.caseSensitive}:options).then(result=>{
-    if(!cancelled&&result){setBatch({context,result});setSearching(false);}
-   }).catch(cause=>{if(!cancelled){setSearching(false);setError(cause instanceof Error?cause.message:String(cause));}});
+   const sources=new Map(notes.map(note=>[note.path,note]));
+   const show=(answer:VaultAnswer)=>{
+    if(!job.signal.aborted&&answer.kind==="search")setBatch({context,result:attachSearchSources(answer.result,sources)});
+   };
+   void background.run({kind:"search",paths:files,query:wanted,options:local?{regex:options.regex,caseSensitive:options.caseSensitive}:options},notes,job.signal,show).then(answer=>{
+    if(!job.signal.aborted){show(answer);setSearching(false);}
+   }).catch(cause=>{if(!job.signal.aborted){setSearching(false);setError(cause instanceof Error?cause.message:String(cause));}});
   },200);
-  return ()=>{cancelled=true;clearTimeout(timer);};
- },[context,snapshot.notes,local,pathsKey,wanted,composing,options,constrained]);
+  return ()=>{job.abort();clearTimeout(timer);};
+ },[background,context,snapshot.notes,local,pathsKey,wanted,composing,options,constrained]);
  const result=!composing&&batch?.context===context?batch.result:null;
  const choices:SearchChoice[]=[],groups:{file:SearchFile;hits:SearchHit[]}[]=[];let remaining=limit;
  for(const file of result?.files??[]){

@@ -68,12 +68,42 @@ export class BrowserApi implements WorkspaceApi {
   noteActivity = (dayStarts: number[]) => this.request<NoteActivityDay[]>("/api/note-activity", { method: "POST", body: JSON.stringify({ dayStarts }) });
   readHistory = (path:string,id:string) => this.request<HistorySnapshot>(`/api/history/content${query(path)}&id=${encodeURIComponent(id)}`);
   checkpointHistory = (path:string,content:string,expectedVersion:string) => this.request<void>("/api/history/checkpoint", {method:"POST",body:JSON.stringify({path,content,expectedVersion})});
-  snapshot = async (paths: string[]) => {
-    const result = await this.request<{ notes: Note[]; unchanged: string[]; errors: { path: string; error: string }[] }>("/api/snapshot", { method: "POST", body: JSON.stringify({ notes: paths.map((path) => ({ path, version: this.cache.get(path)?.version ?? "" })) }) });
-    for (const note of result.notes) this.cache.set(note.path, note);
-    const found = new Set([...result.notes.map((note) => note.path), ...result.unchanged]);
-    for (const { path } of result.errors) this.cache.delete(path);
-    return { notes: paths.flatMap((path) => found.has(path) && this.cache.has(path) ? [this.cache.get(path)!] : []), errors: result.errors };
+  snapshot = async (paths: string[], signal?: AbortSignal) => {
+    const notes: Note[] = [], errors: { path: string; error: string }[] = [];
+    const readBatch = async (batch: string[]) => {
+      signal?.throwIfAborted();
+      const previous = new Map(batch.map(path => [path, this.cache.get(path)]));
+      const result = await this.request<{ notes: Note[]; unchanged: string[]; errors: { path: string; error: string }[] }>("/api/snapshot", {
+        method: "POST", signal, body: JSON.stringify({ notes: batch.map(path => ({ path, version: previous.get(path)?.version ?? "" })) }),
+      });
+      signal?.throwIfAborted();
+      const found = new Map(result.notes.map(note => [note.path, note]));
+      for (const path of result.unchanged) {
+        const note = previous.get(path);
+        if (note) found.set(path, note);
+      }
+      const ordered = batch.flatMap(path => {
+        const note = found.get(path);
+        if (this.cache.get(path) === previous.get(path)) {
+          if (note) this.cache.set(path, note);
+          else this.cache.delete(path);
+        }
+        return note ? [note] : [];
+      });
+      return { notes: ordered, errors: result.errors };
+    };
+    const pageSize = 32, parallelPages = 4;
+    for (let start = 0; start < paths.length; start += pageSize * parallelPages) {
+      const requests = [];
+      for (let offset = start; offset < Math.min(paths.length, start + pageSize * parallelPages); offset += pageSize) {
+        requests.push(readBatch(paths.slice(offset, offset + pageSize)));
+      }
+      for (const batch of await Promise.all(requests)) {
+        notes.push(...batch.notes);
+        errors.push(...batch.errors);
+      }
+    }
+    return { notes, errors };
   };
   save = async (path: string, content: string, expectedVersion: string) => {
     const previous = await this.store.get<WriteSnapshot>(this.writeKey(path));

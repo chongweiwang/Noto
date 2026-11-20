@@ -57,13 +57,17 @@ fn create_vault(
 }
 
 #[tauri::command]
-fn list_entries(state: State<'_, DesktopState>) -> Result<Vec<VaultEntry>, String> {
-    state.vault()?.list().map_err(|e| e.to_string())
+async fn list_entries(state: State<'_, DesktopState>) -> Result<Vec<VaultEntry>, String> {
+    let vault = state.vault()?;
+    tauri::async_runtime::spawn_blocking(move || vault.list().map_err(|e| e.to_string()))
+        .await.map_err(|_| "文件列表读取中断，请重试".to_owned())?
 }
 
 #[tauri::command]
-fn read_note(state: State<'_, DesktopState>, path: String) -> Result<Note, String> {
-    state.vault()?.read_note(&path).map_err(|e| e.to_string())
+async fn read_note(state: State<'_, DesktopState>, path: String) -> Result<Note, String> {
+    let vault = state.vault()?;
+    tauri::async_runtime::spawn_blocking(move || vault.read_note(&path).map_err(|e| e.to_string()))
+        .await.map_err(|_| "读取笔记中断，请重试".to_owned())?
 }
 
 #[tauri::command]

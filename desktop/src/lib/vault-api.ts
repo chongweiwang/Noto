@@ -44,7 +44,7 @@ export interface VaultApi {
   backupDocument?: (path:string,backupRoot:string,expectedVersion:string)=>Promise<void>;
   importAttachmentData?: (note: string, name: string, bytes: Uint8Array) => Promise<string>;
   entries: () => Promise<Entry[]>;
-  snapshot?: (paths: string[]) => Promise<{ notes: Note[]; errors: { path: string; error: string }[] }>;
+  snapshot?: (paths: string[], signal?: AbortSignal) => Promise<{ notes: Note[]; errors: { path: string; error: string }[] }>;
   read: (path: string) => Promise<Note>;
   save: (path: string, content: string, expectedVersion: string) => Promise<Note>;
   createNote: (path: string, content?: string) => Promise<Note>;
