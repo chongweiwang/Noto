@@ -14,12 +14,12 @@ type Node = {
 };
 export type TaskStatus = "todo" | "doing" | "done";
 export const taskStatusLabels: Record<TaskStatus, string> = { todo: "待处理", doing: "进行中", done: "已完成" };
-export type TaskFieldKey = "startDate" | "endDate" | "remark" | "id" | "statusText" | "boardOrderText";
+export type TaskFieldKey = "startDate" | "endDate" | "remark" | "id" | "createdAt" | "statusText" | "boardOrderText";
 type Field = { from: number; to: number; value: string };
 export type Task = {
   from: number; to: number; raw: string; stateAt: number; titleFrom: number; titleTo: number;
   indent: string; title: string; completed: boolean; startDate: string; endDate: string; remark: string;
-  id: string; statusText: string; boardOrderText: string; status: TaskStatus | null; boardOrder: number | null;
+  id: string; createdAt: string; statusText: string; boardOrderText: string; status: TaskStatus | null; boardOrder: number | null;
   boardIssues: string[];
   fields: Partial<Record<TaskFieldKey, Field>>;
   issues: string[];
@@ -32,8 +32,8 @@ export function isTaskCategoryDocument(source: string): boolean {
   return /^[ \t\n]*<!--[ \t]*noto:task-category[ \t]*-->[ \t]*(?:\n|$)/.test(source);
 }
 const parser = unified().use(remarkParse).use(remarkGfm);
-const labels = { startDate: "开始日期", endDate: "结束日期", remark: "备注", id: "任务ID", statusText: "状态", boardOrderText: "看板顺序" } as const;
-const keys = { "开始日期": "startDate", "结束日期": "endDate", "备注": "remark", "任务ID": "id", "状态": "statusText", "看板顺序": "boardOrderText" } as const;
+const labels = { startDate: "开始日期", endDate: "结束日期", remark: "备注", id: "任务ID", createdAt: "创建时间", statusText: "状态", boardOrderText: "看板顺序" } as const;
+const keys = { "开始日期": "startDate", "结束日期": "endDate", "备注": "remark", "任务ID": "id", "创建时间": "createdAt", "状态": "statusText", "看板顺序": "boardOrderText" } as const;
 type FieldKey = keyof typeof labels;
 
 function lineStart(source: string, at: number) { return source.lastIndexOf("\n", at - 1) + 1; }
@@ -56,6 +56,12 @@ export function taskOverdue(task: Pick<Task, "completed" | "endDate">, today: st
   return !task.completed && validTaskDate(task.endDate) && task.endDate < today;
 }
 
+function parseCreationTime(value: string): string {
+  if (value.length !== 24) return "";
+  const time = new Date(value);
+  return Number.isFinite(time.getTime()) && time.toISOString() === value ? value : "";
+}
+
 function parseField(source: string, node: Node, limit: number): { key: FieldKey; field: Field; issue?: string } | null {
   const range = offsets(node);
   if (!range) return null;
@@ -63,7 +69,7 @@ function parseField(source: string, node: Node, limit: number): { key: FieldKey;
   if (from >= to) return null;
   const end = Math.min(lineEnd(source, from), to);
   const first = source.slice(from, end);
-  const match = /^([-+*]|\d{1,9}[.)])([ \t]+)(开始日期|结束日期|备注|任务ID|状态|看板顺序)[：:]([ \t]?)(.*)$/.exec(first);
+  const match = /^([-+*]|\d{1,9}[.)])([ \t]+)(开始日期|结束日期|备注|任务ID|创建时间|状态|看板顺序)[：:]([ \t]?)(.*)$/.exec(first);
   if (!match) return null;
   const key = keys[match[3] as keyof typeof keys];
   const start = lineStart(source, from);
@@ -131,7 +137,7 @@ export function parseTaskDocument(source: string): TaskDocument {
       const task: Task = {
         from, to, raw: source.slice(from, to), stateAt: from + markerLength + 1, titleFrom, titleTo: end,
         indent: prefix + " ".repeat(markerLength), title: match[5], completed: item.checked,
-        startDate: "", endDate: "", remark: "", id: "", statusText: "", boardOrderText: "", status: item.checked ? "done" : "todo", boardOrder: null, boardIssues: [], fields: {}, issues: [],
+        startDate: "", endDate: "", remark: "", id: "", createdAt: "", statusText: "", boardOrderText: "", status: item.checked ? "done" : "todo", boardOrder: null, boardIssues: [], fields: {}, issues: [],
       };
       const children = item.children ?? [];
       for (let childIndex = 0; childIndex < children.length; childIndex++) {
@@ -146,6 +152,12 @@ export function parseTaskDocument(source: string): TaskDocument {
           while (fieldLimit > (entryRange?.[0] ?? from) && source[fieldLimit - 1] === "\n") fieldLimit--;
           const parsed = parseField(source, entry, fieldLimit);
           if (!parsed) continue;
+          if (parsed.key === "createdAt") {
+            // Ignore ambiguous timestamps for sorting and leave their Markdown intact.
+            task.createdAt = task.fields.createdAt || parsed.issue ? "" : parseCreationTime(parsed.field.value);
+            task.fields.createdAt ??= parsed.field;
+            continue;
+          }
           if (task.fields[parsed.key]) { (["id", "statusText", "boardOrderText"].includes(parsed.key) ? task.boardIssues : task.issues).push(`${labels[parsed.key]}重复`); continue; }
           task.fields[parsed.key] = parsed.field;
           task[parsed.key] = parsed.field.value;
@@ -231,13 +243,19 @@ export function removeTask(source: string, task: Task): string {
   const from = lineStart(source, task.from), to = source[task.to] === "\n" ? task.to + 1 : task.to;
   return replace(source, from, to, "");
 }
-export function appendTask(source: string, title: string): { content: string; from: number } {
+export function prependTask(source: string, title: string): { content: string; task: Task; tasks: Task[] } {
   if (!title.trim() || /[\r\n]/.test(title)) throw new Error("请输入单行任务名称");
-  const separator = !source ? "" : source.endsWith("\n\n") ? "" : source.endsWith("\n") ? "\n" : "\n\n";
-  const from = source.length + separator.length;
-  const content = `${source}${separator}- [ ] ${title.trim()}\n`;
-  if (!parseTaskDocument(content).tasks.some((task) => task.from === from)) throw new Error("文件末尾的 Markdown 格式无法安全插入任务，请先检查原文件");
-  return { content, from };
+  const first = parseTaskDocument(source).tasks[0];
+  const at = first ? lineStart(source, first.from) : source.length;
+  const separator = first || !source || source.endsWith("\n\n") ? "" : source.endsWith("\n") ? "\n" : "\n\n";
+  // Match the first item's marker and indentation to keep it at the same Markdown list level.
+  const marker = first ? source.slice(at, first.stateAt - 1) : "- ";
+  const entry = `${separator}${marker}[ ] ${title.trim()}\n${first ? "\n" : ""}`;
+  const content = replace(source, at, at, entry);
+  const { tasks } = parseTaskDocument(content);
+  const task = tasks[0];
+  if (task?.from !== (first?.from ?? at + separator.length)) throw new Error("当前 Markdown 格式无法安全插入任务，请先检查原文件");
+  return { content, task, tasks };
 }
 
 // Cross-category moves copy the original task bytes into the target first.

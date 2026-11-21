@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendExistingTask, appendTask, isTaskCategoryDocument, parseTaskDocument, removeTask, setTaskCompleted, setTaskField, setTaskTitle, taskCategoryMarker, taskMoveIssue, taskOverdue, validTaskDate } from "./tasks";
+import { appendExistingTask, isTaskCategoryDocument, parseTaskDocument, prependTask, removeTask, setTaskCompleted, setTaskField, setTaskTitle, taskCategoryMarker, taskMoveIssue, taskOverdue, validTaskDate } from "./tasks";
 
 const sample = `# 工作
 
@@ -136,7 +136,7 @@ describe("任务 Markdown 文件", () => {
   });
 
   it("新增、移除日期与任务不会改动相邻任务", () => {
-    const added = appendTask("# 生活\n", "买牛奶");
+    const added = prependTask("# 生活\n", "买牛奶");
     let task = parseTaskDocument(added.content).tasks[0];
     let content = setTaskField(added.content, task, "startDate", "2026-11-13");
     task = parseTaskDocument(content).tasks[0];
@@ -151,6 +151,25 @@ describe("任务 Markdown 文件", () => {
     expect(parseTaskDocument(removed).tasks[0].raw).toBe(two[0].raw);
   });
 
+  it("将新任务插到第一个任务前，保留分类标题、说明和现有有序列表", () => {
+    const header = taskCategoryMarker + "\n\n# 工作\n\n分类说明。\n\n";
+    const existing = "  1. [ ] 原任务\n     - 备注：保留\n  2. [x] 已完成\n";
+    const added = prependTask(header + existing, "新增");
+    expect(added.content).toBe(header + "  1. [ ] 新增\n\n" + existing);
+    expect(added.tasks.map((task) => task.title)).toEqual(["新增", "原任务", "已完成"]);
+  });
+
+  it("解析直接创建时间字段，缺失、无效及有歧义的时间不用于排序", () => {
+    const time = "2026-11-21T06:30:00.000Z";
+    const field = "  - 创建时间：" + time + "\n";
+    const content = "- [ ] 已记录\n" + field + "\n- [ ] 旧任务\n\n- [ ] 无效\n" +
+      "  - 创建时间：2026-02-30T06:30:00.000Z\n\n- [ ] 重复\n" + field + field;
+    const { tasks } = parseTaskDocument(content);
+    expect(tasks.map((task) => task.createdAt)).toEqual([time, "", "", ""]);
+    const edited = setTaskField(content, tasks[2], "remark", "正常编辑");
+    expect(edited).toContain("创建时间：2026-02-30T06:30:00.000Z");
+  });
+
   it("检查非法日期、字段重复、过期位置和无法插入的位置", () => {
     expect(validTaskDate("2024-02-29")).toBe(true);
     expect(validTaskDate("2025-02-29")).toBe(false);
@@ -162,7 +181,7 @@ describe("任务 Markdown 文件", () => {
     const invalid = parseTaskDocument(duplicate).tasks[0];
     expect(invalid.issues).toContain("开始日期重复");
     expect(() => setTaskField(duplicate, invalid, "remark", "文字")).toThrow("存在问题");
-    expect(() => appendTask("```\n未闭合代码块\n", "无法插入")).toThrow("无法安全插入");
+    expect(() => prependTask("```\n未闭合代码块\n", "无法插入")).toThrow("无法安全插入");
   });
 
   it("跨分类复制原任务并拒绝改变本文件锚点和外部链接定义", () => {

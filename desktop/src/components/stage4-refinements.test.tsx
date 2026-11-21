@@ -10,7 +10,7 @@ import {WorkspaceError} from "../lib/api-error";
 import type {WorkspaceApi} from "../lib/vault-api";
 import {createCanvasNode,serializeCanvas} from "../lib/canvas-document";
 import {emptyDrawing,serializeDrawing} from "../lib/drawing-document";
-import {appendTask,taskCategoryMarker} from "../lib/tasks";
+import {prependTask,taskCategoryMarker} from "../lib/tasks";
 
 vi.mock("../lib/mermaid",()=>({renderMermaid:async()=>"<svg/>"}));
 const cases=[
@@ -31,7 +31,7 @@ function fixture(kind:"desktop"|"web"){
  const vault=new MemoryVault();
  for(const item of cases)vault.put(item.path,item.source("原文"));
  vault.put("其他.md","另一篇原文");vault.put("第三篇.md","第三篇原文");
- vault.put("任务/工作/开发.md",appendTask(taskCategoryMarker+"\n\n# 开发\n","流程核对").content);
+ vault.put("任务/工作/开发.md",prependTask(taskCategoryMarker+"\n\n# 开发\n","流程核对").content);
  const api={...vault,status:async()=>({vault:"stage4-finish",id:"stage4-finish",error:null}),
   read:vi.fn(async(path:string)=>{if(!vault.notes.has(path))throw new WorkspaceError("not_found","文件不存在");return vault.read(path);}),
   save:vi.fn(vault.save),writeDraft:vi.fn(vault.writeDraft),removeDraft:vi.fn(vault.removeDraft),

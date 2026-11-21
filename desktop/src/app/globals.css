@@ -443,6 +443,7 @@ div.math-widget { text-align: center; }
 .task-properties { display: flex; flex-direction: column; }
 .task-field { display: flex; align-items: center; gap: 16px; min-height: 41px; margin: 0; border-bottom: 1px solid var(--border); color: var(--text-muted); font-size: 12px; font-weight: 400; }
 .task-field > span { display: flex; align-items: center; flex-shrink: 0; gap: 8px; width: 85px; }
+.task-field > time { margin-left: auto; padding-inline: 5px; color: var(--text-primary); text-align: right; }
 .task-field input, .task-field select { margin-left: auto; width: 165px; min-width: 0; height: 31px; padding: 4px 5px; border: 1px solid transparent; border-radius: 4px; background: transparent; color: var(--text-primary); text-align: right; font: inherit; font-size: 12px; }
 .task-field input:hover, .task-field select:hover { background: var(--bg-secondary); }
 .task-field input:focus, .task-field select:focus { border-color: var(--accent); outline: none; }

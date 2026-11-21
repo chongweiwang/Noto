@@ -159,6 +159,7 @@ describe("独立任务管理", () => {
     fireEvent.change(input, { target: { value: "第二件事" } });
     fireEvent.submit(input.closest("form")!);
     await screen.findByRole("button", { name: /第二件事/ });
+    expect(screen.getAllByRole("button", { name: /第一件事|第二件事/ }).map((button) => button.title)).toEqual(["第二件事", "第一件事"]);
     fireEvent.click(screen.getByLabelText("完成任务：第一件事"));
     await waitFor(() => expect((screen.getByLabelText("完成任务：第一件事") as HTMLInputElement).checked).toBe(true));
     const group = screen.getByRole("button", { name: /已完成\s*1\s*项/, expanded: true });
@@ -169,7 +170,10 @@ describe("独立任务管理", () => {
     expect(screen.getByRole("button", { name: /第二件事/ })).toBeTruthy();
     fireEvent.click(group);
     expect(screen.getByRole("button", { name: /第一件事/ })).toBeTruthy();
-    await waitFor(() => expect(parseTaskDocument(notes.get("任务/默认/收件箱.md")!.content).tasks[0].completed).toBe(true), { timeout: 3500 });
+    await waitFor(() => expect(parseTaskDocument(notes.get("任务/默认/收件箱.md")!.content).tasks.map(({ title, completed }) => ({ title, completed }))).toEqual([
+      { title: "第二件事", completed: false },
+      { title: "第一件事", completed: true },
+    ]), { timeout: 3500 });
   });
 
   it("分类对应单个 Markdown 文件，可重命名并移到回收站", async () => {

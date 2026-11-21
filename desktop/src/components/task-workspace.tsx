@@ -105,6 +105,7 @@ function TaskDetails({ item, disabled, paths, categories, saveControls, onEdit, 
       <label className="task-field"><span><WorkspaceIcon name="folder" size={14} />分类</span><select aria-label="任务分类" value={item.path} disabled={disabled || categories.length < 2} onChange={(event) => { if (event.target.value !== item.path) onMove(item, event.target.value); }}>
         {categories.map((path) => <option key={path} value={path}>{taskLabel(path)}</option>)}
       </select></label>
+      {task.createdAt && <div className="task-field"><span><WorkspaceIcon name="calendar" size={14} />创建时间</span><time dateTime={task.createdAt}>{new Date(task.createdAt).toLocaleString("zh-CN")}</time></div>}
     </div>
     <div className="task-remark-section">
       <div className="task-remark-heading"><strong><WorkspaceIcon name="file" />备注说明</strong><div role="group" aria-label="备注视图"><button type="button" aria-pressed={remarkMode === "edit"} onClick={() => setRemarkMode("edit")}>编辑</button><button type="button" aria-pressed={remarkMode === "preview"} onClick={() => setRemarkMode("preview")}>预览</button></div></div>
@@ -166,7 +167,13 @@ export function TaskWorkspace({ group = null, category, categories, snapshot, se
     previousItems.current = next;
     return next;
   }, [documents]);
-  const scope = items.filter((item) => category ? item.path === category : !group || parentPath(item.path) === group).sort((a, b) => a.path.localeCompare(b.path) || compareTaskOrder(a.task, b.task));
+  const scope = useMemo(() => {
+    const allTasks = !category && !group;
+    return items.filter((item) => category ? item.path === category : !group || parentPath(item.path) === group).sort((a, b) => {
+      if (allTasks && a.task.createdAt !== b.task.createdAt) return a.task.createdAt > b.task.createdAt ? -1 : 1;
+      return a.path.localeCompare(b.path) || compareTaskOrder(a.task, b.task);
+    });
+  }, [items, category, group]);
   function choose(item: Item) {
     setSelected({ path: item.path, from: item.task.from, id: item.task.id, raw: item.task.raw, key: "detail-" + (++serial.current) });
   }

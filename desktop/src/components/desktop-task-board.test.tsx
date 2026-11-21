@@ -58,6 +58,24 @@ it("看板和列表按当前范围显示来源，单分类不留空白辅助行"
   expect(row().querySelector(".task-row-category")?.textContent).toBe("开发");
   expect(vault.notes.get(path)!.content).toBe(original);
 });
+it("全部任务在列表和看板中跨分类按创建时间降序，并在详情显示时间", async () => {
+  const { mount, vault } = fixture(false);
+  const latest = "2026-11-21T06:30:00.000Z";
+  vault.put(path, taskCategoryMarker + "\n\n- [ ] 旧任务\n\n- [ ] 昨天创建\n  - 创建时间：2026-11-20T06:30:00.000Z\n");
+  vault.put(other, taskCategoryMarker + "\n\n- [ ] 更早创建\n  - 创建时间：2026-11-19T06:30:00.000Z\n\n- [ ] 今天创建\n  - 创建时间：" + latest + "\n");
+  const { container } = mount();
+  await screen.findByRole("button", { name: "旧任务" });
+  fireEvent.click(screen.getByRole("button", { name: "全部任务" }));
+  await screen.findByRole("button", { name: /今天创建/ });
+  const order = ["今天创建", "昨天创建", "更早创建", "旧任务"];
+  expect(Array.from(container.querySelectorAll(".task-row-title"), (row) => row.textContent)).toEqual(order);
+  fireEvent.click(screen.getByRole("button", { name: "看板" }));
+  const column = screen.getByRole("region", { name: "待处理列" });
+  expect(Array.from(column.querySelectorAll(".board-card-title"), (row) => row.textContent)).toEqual(order);
+  fireEvent.click(screen.getByRole("button", { name: "今天创建" }));
+  const label = await screen.findByText("创建时间");
+  expect(label.parentElement?.querySelector("time")?.dateTime).toBe(latest);
+});
 it("列表与看板一致提示逾期，已完成和无效日期不误报", async () => {
   const { mount, vault } = fixture(false);
   vault.put(path, taskCategoryMarker + "\n\n- [ ] 过期待办\n  - 结束日期：2000-01-01\n\n- [x] 过期已完成\n  - 结束日期：2000-01-01\n\n- [ ] 无效日期\n  - 结束日期：2000-02-30\n\n- [ ] 将来任务\n  - 结束日期：2999-01-01\n");
@@ -106,16 +124,19 @@ it("旧任务前方补排序导致偏移变化时，首次状态操作仍保留�
 });
 
 it("列内创建已完成任务，列表取消完成后回到待处理并且日期仍为空", async () => {
-  const { mount, vault } = fixture(); mount(); await ready();
+  const { mount, vault } = fixture();
+  vault.put(path, vault.notes.get(path)!.content + "\n- [x] 旧卡片\n  - 看板顺序：1000\n");
+  mount(); await ready();
   fireEvent.click(screen.getByRole("button", { name: "在已完成添加任务" }));
   const input = screen.getByLabelText("新建已完成任务");
   fireEvent.change(input, { target: { value: "新卡片" } }); fireEvent.submit(input.closest("form")!);
   await screen.findByRole("button", { name: "新卡片" });
-  expect(within(screen.getByRole("region", { name: "已完成列" })).getByRole("button", { name: "新卡片" })).toBeTruthy();
+  const column = screen.getByRole("region", { name: "已完成列" });
+  expect(column.querySelector("[data-task-card]")).toBe(card("新卡片"));
   fireEvent.click(screen.getByRole("button", { name: "列表" }));
   fireEvent.click(screen.getByLabelText("完成任务：新卡片"));
   await waitFor(() => expect((screen.getByLabelText("完成任务：新卡片") as HTMLInputElement).checked).toBe(false));
-  await waitFor(() => expect(parseTaskDocument(vault.notes.get(path)!.content).tasks.find((task) => task.title === "新卡片")).toMatchObject({ status: "todo", startDate: "", endDate: "" }), { timeout: 4000 });
+  await waitFor(() => expect(parseTaskDocument(vault.notes.get(path)!.content).tasks[0]).toMatchObject({ title: "新卡片", status: "todo", startDate: "", endDate: "" }), { timeout: 4000 });
 });
 it("单分类卡片上移可持久恢复，筛选与看板模式随知识库恢复", async () => {
   const { mount, key, vault } = fixture(); let view = mount(); await ready();

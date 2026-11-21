@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { parseTaskDocument, taskCategoryMarker } from "./tasks";
-import { appendManagedTask, changeManagedTask, compareTaskOrder, placeTask, taskWritable } from "./task-board";
+import { prependManagedTask, changeManagedTask, compareTaskOrder, placeTask, taskWritable } from "./task-board";
 const base = taskCategoryMarker + "\n\n# 工作\n\n说明保留。\n\n";
 const parse = (text: string) => parseTaskDocument(text).tasks;
 it("旧任务只读推导三列，状态冲突以完成框为准并提示，未知状态不隐藏", () => {
@@ -48,18 +48,37 @@ it("首次编辑按需补 ID，连续修改保留 ID 和复杂备注的每个中
   const initialOther = parse(source)[1].raw;
   source = changeManagedTask(source, parse(source)[0], { kind: "title", value: "A 新" });
   const id = parse(source)[0].id; expect(id).toBeTruthy();
+  expect(parse(source)[0].createdAt).toBe("");
   for (const value of ["~","~~~md\n", "~~~md\n- [ ] 示例", "~~~md\n- [ ] 示例\n~~~\n\n备注 "]) {
     source = changeManagedTask(source, parse(source)[0], { kind: "remark", value });
     expect(parse(source)[0]).toMatchObject({ id, remark: value }); expect(parse(source)[1].raw).toBe(initialOther);
   }
 });
-it("创建三种状态的任务，同名任务各自有 ID，日期不被状态推断修改", () => {
+it("创建三种状态的任务，同名任务有各自的 ID 和创建时间", () => {
+  const before = Date.now();
   let source = base;
-  for (const status of ["todo","doing","done"] as const) source = appendManagedTask(source, "同名", status).content;
+  for (const status of ["todo","doing","done"] as const) source = prependManagedTask(source, "同名", status).content;
   const tasks = parse(source);
-  expect(tasks.map((task) => task.status)).toEqual(["todo","doing","done"]);
+  expect(tasks.map((task) => task.status)).toEqual(["done","doing","todo"]);
   expect(new Set(tasks.map((task) => task.id)).size).toBe(3);
   expect(tasks.every((task) => !task.startDate && !task.endDate)).toBe(true);
+  const after = Date.now();
+  for (const task of tasks) {
+    expect(Date.parse(task.createdAt)).toBeGreaterThanOrEqual(before);
+    expect(Date.parse(task.createdAt)).toBeLessThanOrEqual(after);
+    expect(source).toContain("  - 创建时间：" + task.createdAt);
+  }
+  const changed = changeManagedTask(source, tasks[0], { kind: "completed", value: false });
+  expect(parse(changed)[0].createdAt).toBe(tasks[0].createdAt);
+});
+it("连续新增始终在现有看板顺序之前，旧任务顺序字段保留", () => {
+  const old = "- [ ] 源码第一\n  - 看板顺序：2000\n\n- [ ] 看板第一\n  - 看板顺序：0\n\n- [ ] 进行中\n  - 状态：进行中\n  - 看板顺序：1000\n";
+  const first = prependManagedTask(base + old, "第一次新增").content;
+  const second = prependManagedTask(first, "第二次新增").content;
+  const tasks = parse(second);
+  expect(second.endsWith(old)).toBe(true);
+  expect(tasks.map((task) => task.title)).toEqual(["第二次新增", "第一次新增", "源码第一", "看板第一", "进行中"]);
+  expect(tasks.sort(compareTaskOrder).map((task) => task.title)).toEqual(["第二次新增", "第一次新增", "看板第一", "进行中", "源码第一"]);
 });
 it("来源过期和目标落点消失时拒绝，不依赖相同标题猜测任务", () => {
   const source = base + "- [ ] A\n";

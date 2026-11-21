@@ -34,7 +34,7 @@ import { useVaultAnalysis } from "../lib/vault-analysis-client";
 import type { VaultAnswer } from "../lib/vault-analysis";
 import { dailyPath, localDate } from "../lib/calendar";
 import { appendExistingTask, isTaskCategoryDocument, parseTaskDocument, removeTask, taskCategoryMarker, taskFolder, taskMoveIssue, type TaskStatus } from "../lib/tasks";
-import { appendManagedTask, changeManagedTask, placeTask, taskWritable } from "../lib/task-board";
+import { prependManagedTask, changeManagedTask, placeTask, taskWritable } from "../lib/task-board";
 import { TaskSidebar, TaskWorkspace, categoryName, type TaskAction, type TaskFocus, type TaskItemView } from "./task-workspace";
 import { WorkspaceTabs, panelId, tasksTabId, transferredTab, workspaceTabType } from "./workspace-tabs";
 import { WorkspaceIcon } from "./workspace-icon";
@@ -1630,7 +1630,7 @@ export default function DesktopApp() {
       setError("请先打开分类并处理草稿或文件冲突。"); return false;
     }
     try {
-      const added = appendManagedTask(current.content, title, status);
+      const added = prependManagedTask(current.content, title, status);
       changeContent(added.content); setTaskFocus(null);
       if (fromAll) { setTaskCategory(null); setTaskGroup(previousGroup); }
       return true;

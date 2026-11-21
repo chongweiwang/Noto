@@ -9,7 +9,7 @@ import {MemoryVault} from "../test/memory-vault";
 import {WorkspaceRuntimeContext,type WorkspaceRuntime} from "../lib/workspace-runtime";
 import {WorkspaceError} from "../lib/api-error";
 import type {WorkspaceApi} from "../lib/vault-api";
-import {appendTask,taskCategoryMarker} from "../lib/tasks";
+import {prependTask,taskCategoryMarker} from "../lib/tasks";
 import {createCanvasNode,serializeCanvas} from "../lib/canvas-document";
 vi.mock("../lib/mermaid",()=>({renderMermaid:async()=>"<svg/>"}));
 const target="# 开篇\n\n正文\n\n## 重复\n\n首节\n\n## 重复\n\n末节";
@@ -22,7 +22,7 @@ afterEach(()=>{cleanup();vi.restoreAllMocks();vi.unstubAllGlobals();});
 function fixture(kind:"desktop"|"web"){
  const vault=new MemoryVault();vault.put("源.md",source);vault.put("目标.md",target);vault.put("其他.md","# 其他\n\n原文");
  vault.put("甲/同名.md",target);vault.put("乙/同名.md",target);
- vault.put("任务/工作/开发.md",appendTask(taskCategoryMarker+"\n\n# 开发\n","关联核对").content);
+ vault.put("任务/工作/开发.md",prependTask(taskCategoryMarker+"\n\n# 开发\n","关联核对").content);
  vault.put("空间.canvas",serializeCanvas({nodes:[createCanvasNode("text",{x:0,y:0},{id:"text",text:"[[#开篇|本地标题]]\n\n[[目标#重复-1|跨篇标题]]"})],edges:[]}));
  const api={...vault,status:async()=>({vault:"wiki-tests",id:"wiki-tests",error:null}),
  read:vi.fn(async(path:string)=>{if(!vault.notes.has(path))throw new WorkspaceError("not_found","文件不存在");return vault.read(path);}),

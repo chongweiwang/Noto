@@ -11,7 +11,7 @@ import type { WorkspaceApi } from "../lib/vault-api";
 import { VaultAnalysisClient } from "../lib/vault-analysis-client";
 import DesktopApp from "./desktop-app";
 import Home from "../app/page";
-import { appendTask, taskCategoryMarker } from "../lib/tasks";
+import { prependTask, taskCategoryMarker } from "../lib/tasks";
 import { dailyPath, localDate } from "../lib/calendar";
 
 const native = vi.hoisted(() => ({ getCurrentWindow: vi.fn(() => { throw new Error("网页不应调用窗口接口"); }) }));
@@ -230,7 +230,7 @@ describe("共享网页工作区", () => {
     expect(event.defaultPrevented).toBe(true); await screen.findByText(/草稿未能保存：存储空间不足/);
   });
   it("日期控件同时收到 input/change 时只更新一次，日期确实写入 Markdown", async () => {
-    const { vault } = setup((vault) => vault.put("任务/工作/日期.md", appendTask(`${taskCategoryMarker}\n\n# 日期\n`, "日期任务").content));
+    const { vault } = setup((vault) => vault.put("任务/工作/日期.md", prependTask(`${taskCategoryMarker}\n\n# 日期\n`, "日期任务").content));
     await screen.findByRole("button", { name: "a.md" });
     fireEvent.click(screen.getByRole("button", { name: "任务管理" }));
     fireEvent.click(await screen.findByRole("button", { name: /日期任务/ }));
